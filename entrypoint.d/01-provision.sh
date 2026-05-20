@@ -1,19 +1,20 @@
 #!/bin/sh
-echo "=== Starte Provisionierung der AD Testdaten ==="
+echo "=== Starting provisioning of AD test data ==="
 
-# 1. Eine neue Organisational Unit (OU) für Tests anlegen
+# 1. Create a new Organizational Unit (OU) for tests
 samba-tool ou create "OU=TestingOU"
 
+# Create a nested OU for groups under the testing OU
 samba-tool ou create "OU=Groups,OU=TestingOU,DC=samdom,DC=example,DC=com"
 
-# 2. Den Testbenutzer anlegen (Passwort muss Komplexitätsregeln erfüllen)
+# 2. Create the test user (password must meet complexity requirements)
 samba-tool user create max.mustermann "SecurePass123!" \
   --userou="OU=TestingOU" \
   --surname="Mustermann" \
   --given-name="Max"
 
-# 3. Die Marketing-Gruppe anlegen
+# 3. Create the Marketing group
 samba-tool group add Marketing-Gruppe \
   --groupou="OU=TestingOU"
 
-echo "=== Provisionierung abgeschlossen ==="
+echo "=== Provisioning completed ==="

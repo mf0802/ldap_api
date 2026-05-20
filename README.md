@@ -137,7 +137,7 @@ curl -X POST http://localhost:3000/api/computer/create \
   -H "Content-Type: application/json" \
   -d '{
     "computer_name": "DESKTOP-PC01",
-    "ou_dn": "OU=Computers,DC=samdom,DC=example,DC=com"
+    "ou_dn": "CN=Computers,DC=samdom,DC=example,DC=com"
   }'
 ```
 
