@@ -1,0 +1,15 @@
+#version: '3.8'
+
+services:
+  samba-ad:
+    image: smblds/smblds:latest
+    container_name: fake_active_directory
+    platform: linux/amd64 # Erzwingt Kompatibilität für Apple Silicon Macs und x86_64 Linux
+    restart: unless-stopped
+    environment:
+      INSECURE_LDAP: "true" # Erlaubt unverschlüsselte Test-Logins auf Port 389
+    ports:
+      - "389:389"   # Standard LDAP Port
+      - "636:636"   # LDAPS Port (Verschlüsselt)
+    volumes:
+      - ./entrypoint.d:/entrypoint.d # Automatisches Einpflegen von Testdaten beim Booten
