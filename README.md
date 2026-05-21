@@ -1,3 +1,195 @@
+# Docker Infrastructure Documentation for Fake Active Directory Environments
+
+This documentation describes the multi-domain Active Directory test setup running inside Docker. It is designed to emulate multiple isolated forest structures (`domaina.local`, `://example.com`, and `test.forest.net`) locally for API development, cross-forest account cloning, and integration testing.
+
+---
+
+## 🏗️ Architecture Overview
+
+The containerized infrastructure consists of independent Samba4 AD containers utilizing the lightweight `smblds/smblds` image. Each instance runs its own LDAP/LDAPS daemon, Kerberos realm, and dynamic seed provisioning script.
+
+### Network Port Mappings
+
+To prevent local interface allocation conflicts (`Port is already allocated`), host ports are strictly separated:
+
+
+| Container Name | Domain / Forest Name | Internal Port | Mapped Host Port | Protocol |
+| :--- | :--- | :--- | :--- | :--- |
+| `fake_ad_domain_a` | `domaina.local` | `389`<br>`636` | **`389`**<br>**`636`** | LDAP (Insecure)<br>LDAPS (Secure TLS) |
+| `fake_ad_domain_b` | `://example.com` | `389`<br>`636` | **`3389`**<br>**`3636`** | LDAP (Insecure)<br>LDAPS (Secure TLS) |
+| `fake_ad_domain_c` | `test.forest.net` | `389`<br>`636` | **`4389`**<br>**`4636`** | LDAP (Insecure)<br>LDAPS (Secure TLS) |
+
+---
+
+## 🛠️ Orchestration (`docker-compose.yml`)
+
+The infrastructure configuration uses a single orchestrator. All sensitive modifications to passwords (`unicodePwd`) and system attributes require secure `ldaps://` targets, which are exposed via host ports `636`, `3636`, and `4636`.
+
+```yaml
+version: '3.8'
+
+services:
+  # ==========================================
+  # Domain A: Source Domain (domaina.local)
+  # ==========================================
+  samba-ad-a:
+    image: smblds/smblds:latest
+    container_name: fake_ad_domain_a
+    platform: linux/amd64
+    restart: unless-stopped
+    environment:
+      INSECURE_LDAP: "true"
+      REALM: "DOMAINA.LOCAL"
+      DOMAIN: "DOMAINA"
+      ADMINPASS: "SecretA123!"
+    ports:
+      - "389:389"
+      - "636:636"
+    volumes:
+      - ./entrypoint_a.d:/entrypoint.d
+
+  # ==========================================
+  # Domain B: Target/Default Domain (://example.com)
+  # ==========================================
+  samba-ad-b:
+    image: smblds/smblds:latest
+    container_name: fake_ad_domain_b
+    platform: linux/amd64
+    restart: unless-stopped
+    environment:
+      INSECURE_LDAP: "true"
+      REALM: "://example.com"
+      DOMAIN: "SAMDOM"
+      ADMINPASS: "SecretB123!"
+    ports:
+      - "3389:389"
+      - "3636:636"
+    volumes:
+      - ./entrypoint_b.d:/entrypoint.d
+
+  # ==========================================
+  # Domain C: External Test Domain (test.forest.net)
+  # ==========================================
+  samba-ad-c:
+    image: smblds/smblds:latest
+    container_name: fake_ad_domain_c
+    platform: linux/amd64
+    restart: unless-stopped
+    environment:
+      INSECURE_LDAP: "true"
+      REALM: "TEST.FOREST.NET"
+      DOMAIN: "TESTFOREST"
+      ADMINPASS: "SecretC123!"
+    ports:
+      - "4389:389"
+      - "4636:636"
+    volumes:
+      - ./entrypoint_c.d:/entrypoint.d
+```
+
+---
+
+## 🚀 Directory Seeding Scripts (Data Provisioning)
+
+Samba containers parse the bound `./entrypoint_*.d` directory on initial boot. Scripts inside must contain execution privileges (`chmod +x`) and use POSIX-compliant syntax.
+
+### 📄 Domain A Setup (`./entrypoint_a.d/provision_a.sh`)
+Populates Domain A with predictable, stable data structures for reproduction tests.
+
+```bash
+#!/bin/sh
+echo "=== Starting provisioning of Domain A (Source) ==="
+
+samba-tool ou create "OU=TestingOU"
+
+samba-tool user create john.doe "SourcePass123!" \
+  --userou="OU=TestingOU" \
+  --surname="Doe" \
+  --given-name="John" \
+  --mail="john.doe@domainA.local" \
+  --job-title="DevOps Engineer" \
+  --department="IT-Infrastructure" \
+  --telephone-number="+49 123 456789"
+
+samba-tool user create jane.smith "SourcePass456!" \
+  --userou="OU=TestingOU" \
+  --surname="Smith" \
+  --given-name="Jane" \
+  --mail="jane.smith@domainA.local" \
+  --job-title="Frontend Developer" \
+  --department="Software-Engineering"
+
+echo "=== Domain A Provisioning completed ==="
+```
+
+### 📄 Domain B Setup (`./entrypoint_b.d/provision_b.sh`)
+Populates Domain B using an automated randomization pattern to simulate dynamic user growth.
+
+```bash
+#!/bin/sh
+echo "=== Starting provisioning of dynamic AD test data ==="
+
+samba-tool ou create "OU=TestingOU"
+samba-tool ou create "OU=Groups,OU=TestingOU,DC=samdom,DC=example,DC=com"
+
+# Generate 3 randomized groups
+for i in 1 2 3; do
+  RAND_ID=$(awk 'BEGIN{srand();print int(rand()*9000)+1000}')
+  samba-tool group add "Group-${RAND_ID}" --groupou="OU=Groups,OU=TestingOU"
+done
+
+# Generate 5 randomized users matching complexity constraints
+FIRST_NAMES="John Jane Alex Emily Michael Sarah"
+LAST_NAMES="Smith Doe Taylor Brown Wilson Miller"
+
+for i in 1 2 3 4 5; do
+  F_NAME=$(echo "$FIRST_NAMES" | awk -v r=$(( (RANDOM % 6) + 1 )) '{print $r}')
+  L_NAME=$(echo "$LAST_NAMES" | awk -v r=$(( (RANDOM % 6) + 1 )) '{print $r}')
+  RAND_NUM=$(awk 'BEGIN{srand();print int(rand()*90)+10}')
+  USERNAME=$(echo "${F_NAME}.${L_NAME}${RAND_NUM}" | tr '[:upper:]' '[:lower:]')
+  
+  samba-tool user create "${USERNAME}" "SecurePass${RAND_NUM}!" \
+    --userou="OU=TestingOU" \
+    --surname="${L_NAME}" \
+    --given-name="${F_NAME}"
+done
+
+echo "=== Provisioning completed ==="
+```
+
+---
+
+## 🪵 Operational Runbooks
+
+### Initial Start & Infrastructure Rebuild
+When altering `.env` variables or resetting state, database shards inside volume stores must be purged completely before structural properties can re-bind.
+
+```bash
+# 1. Stop all runtime instances and scrub underlying persistence blocks
+docker compose down --volumes --remove-orphans
+
+# 2. Hard purge potential lingering platform caches
+docker rm -f fake_active_directory fake_ad_domain_a fake_ad_domain_b fake_ad_domain_c 2>/dev/null
+
+# 3. Fire up fresh containers asynchronously
+docker compose up -d
+
+# 4. Monitor provisioning progress (Wait approx 15 seconds until daemons loop out "ready")
+docker compose logs -f
+```
+
+### Local Network Connection Troubleshooting
+If a container loops out port mapping exceptions, identify host bindings occupying the LDAP parameters:
+
+* **Unix/macOS Toolchain:**
+  ```bash
+  sudo lsof -i :389
+  ```
+* **Windows (PowerShell Core):**
+  ```powershell
+  Get-NetTCPConnection -LocalPort 389
+  ```
+
 # 📖 LDAP API – cURL Reference Guide
 
 This guide provides a comprehensive list of cURL commands to interact with the LDAP API endpoints.
@@ -141,6 +333,7 @@ curl -X POST http://localhost:3000/api/group/batch \
 
 ### 4. Manage Group Ownership
 Updates owner email addresses inside the `info` field (Notes) of the group. Preserves existing non-owner free text within the field.
+**Note:** that's a custom company based option how we manage multiple owners for an AD group.
 
 ```bash
 curl -X PATCH http://localhost:3000/api/group/owner \
