@@ -1,15 +1,15 @@
 import json
 import os
+from typing import Dict
 from pydantic import BaseModel
 from services.ldap_service import connect_ldap
 from errors import AppError
 from ldap3 import Connection, SUBTREE, MODIFY_REPLACE
 from config import settings
 
-class ModifyAttributePayload(BaseModel):
+class ModifyMultipleAttributesPayload(BaseModel):
     target_dn: str
-    attribute: str
-    value: str
+    attributes: Dict[str, str]  # Key: Attributname, Value: Neuer Wert
 
 class QueryObjectPayload(BaseModel):
     sam_account_name: str
@@ -22,15 +22,15 @@ class DeleteObjectPayload(BaseModel):
 ALLOWED_ATTRIBUTES = {
     "user": [
         "cn", "sAMAccountName", "givenName", "sn", "mail", 
-        "department", "title", "whenCreated", "userAccountControl"
+        "department", "title", "whenCreated", "userAccountControl", "telephoneNumber","memberOf"
     ],
     "group": [
         "cn", "sAMAccountName", "objectClass", "info", "description", 
-        "member", "whenCreated"
+        "member", "whenCreated", "memberOf"
     ],
     "computer": [
         "cn", "sAMAccountName", "operatingSystem", "operatingSystemVersion", 
-        "location", "whenCreated"
+        "location", "whenCreated", "memberOf"
     ]
 }
 # =====================================================================
@@ -164,9 +164,14 @@ def delete_object_from_forest(payload: DeleteObjectPayload, object_class: str) -
 # UNIVERSAL ROUTE LOGIC
 # =====================================================================
 
-def modify_attribute(payload: ModifyAttributePayload) -> dict:
+def modify_attributes(payload: ModifyMultipleAttributesPayload) -> dict:
     conn = connect_ldap()
-    changes = {payload.attribute: [(MODIFY_REPLACE, [payload.value])]}
+    
+    # Dynamic construction of the changes dictionary for multiple attributes
+    changes = {
+        attr_name: [(MODIFY_REPLACE, [attr_value])] 
+        for attr_name, attr_value in payload.attributes.items()
+    }
     
     if not conn.modify(payload.target_dn, changes):
         raise AppError(
@@ -177,7 +182,7 @@ def modify_attribute(payload: ModifyAttributePayload) -> dict:
         
     return {
         "status": "success",
-        "message": "Attribute updated successfully",
+        "message": "Attributes updated successfully",
         "dn": payload.target_dn,
-        "updated": {payload.attribute: payload.value}
+        "updated": payload.attributes
     }

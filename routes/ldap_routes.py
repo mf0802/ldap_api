@@ -4,9 +4,9 @@ from services import user, group, computer, ldap_common_service
 router = APIRouter(prefix="/api")  # API routes are mounted under /api
 
 @router.post("/object/attribute/modify", status_code=status.HTTP_200_OK)
-def handle_modify_attribute(payload: ldap_common_service.ModifyAttributePayload):
-    # Modify a single LDAP attribute for any object type using the shared service
-    return ldap_common_service.modify_attribute(payload)
+def handle_modify_attributes(payload: ldap_common_service.ModifyMultipleAttributesPayload):
+    # Modify multiple LDAP attributes for any object type using the shared service
+    return ldap_common_service.modify_attributes(payload)
 
 @router.post("/user/create", status_code=status.HTTP_201_CREATED)
 def handle_create_user(payload: user.CreateUserPayload):

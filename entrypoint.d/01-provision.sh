@@ -6,6 +6,7 @@ samba-tool ou create "OU=TestingOU"
 
 # Create a nested OU for groups under the testing OU
 samba-tool ou create "OU=Groups,OU=TestingOU,DC=samdom,DC=example,DC=com"
+samba-tool ou create "OU=Computers,OU=TestingOU,DC=samdom,DC=example,DC=com"
 
 # 2. Create the test user (password must meet complexity requirements)
 samba-tool user create max.mustermann "SecurePass123!" \

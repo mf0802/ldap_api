@@ -16,12 +16,16 @@ Modifies a specific attribute of any existing LDAP object (User, Group, or Compu
 
 ```bash
 curl -X POST http://localhost:3000/api/object/attribute/modify \
-  -H "X-API-Key: your_api_key_here" \
+  -H "X-API-Key: mein_super_geheimer_schluessel" \
   -H "Content-Type: application/json" \
   -d '{
-    "target_dn": "CN=Max Mustermann,OU=TestingOU,DC=samdom,DC=example,DC=com",
-    "attribute": "department",
-    "value": "IT-Operations"
+    "target_dn": "cn=John Doe,OU=TestingOU,DC=samdom,DC=example,DC=com",
+    "attributes": {
+      "displayName": "John R. Doe",
+      "telephoneNumber": "+49 123 456789",
+      "title": "DevOps Engineer",
+      "department": "IT-Infrastructure"
+    }
   }'
 ```
 
@@ -57,14 +61,14 @@ curl -X POST http://localhost:3000/api/user/create \
   }'
 ```
 
-### 2. Delete Group from Specific Forest
+### 2. Delete User from Specific Forest
 ```bash
-curl -X DELETE http://localhost:3000/api/group/delete \
+curl -X DELETE http://localhost:3000/api/user/delete \
   -H "X-API-Key: your_api_key_here" \
   -H "Content-Type: application/json" \
   -d '{
     "domain": "prod.firma.local",
-    "sam_account_name": "GG_Marketing"
+    "sam_account_name": "m.mustermann"
   }'
 ```
 
