@@ -280,13 +280,13 @@ curl -X POST http://localhost:3000/api/user/clone \
 ### 3. Clone User from domain B to comain A
 ```bash
 curl -X POST http://localhost:3000/api/user/clone \
-  -H "X-API-Key: your_api_key_here" \
+  -H "X-API-Key: your_api_key_here"" \
   -H "Content-Type: application/json" \
   -d '{
-    "source_user_dn": "CN=Jane Taylor,OU=TestingOU,DC=samdom,DC=example,DC=com",
-    "target_ou_dn": "OU=TestingOU,DC=domainA,DC=local",
-    "temporary_password": "ReversePassword2026!",
-    "direction": "b_to_a"
+    "source_domain": "samdom.example.com",
+    "source_user_dn": "CN=Sarah Wilson,OU=TestingOU,DC=samdom,DC=example,DC=com",
+    "target_domain": "domaina.local",
+    "target_ou_dn": "OU=TestingOU,DC=domainA,DC=local"
   }'
 ```
 ---
