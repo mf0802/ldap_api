@@ -208,7 +208,7 @@ Modifies a specific attribute of any existing LDAP object (User, Group, or Compu
 
 ```bash
 curl -X POST http://localhost:3000/api/object/attribute/modify \
-  -H "X-API-Key: mein_super_geheimer_schluessel" \
+  -H "X-API-Key: your_api_key_here" \
   -H "Content-Type: application/json" \
   -d '{
     "target_dn": "cn=John Doe,OU=TestingOU,DC=samdom,DC=example,DC=com",
