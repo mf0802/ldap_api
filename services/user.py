@@ -1,5 +1,11 @@
+import secrets
+import string
+from typing import Literal, Optional
+
+from ldap3 import MODIFY_REPLACE
 from pydantic import BaseModel
 from services.ldap_service import connect_ldap
+from services.ldap_service import connect_ldap_domain_a, connect_ldap_domain_b
 from errors import AppError
 
 class CreateUserPayload(BaseModel):
@@ -7,6 +13,12 @@ class CreateUserPayload(BaseModel):
     first_name: str
     last_name: str
     ou_dn: str  # Target organizational unit DN for the new user
+
+class CloneUserPayload(BaseModel):
+    source_user_dn: str
+    target_ou_dn: str
+    temporary_password: Optional[str] = None  # Now optional
+    direction: Literal["a_to_b", "b_to_a"] = "a_to_b"  # Default direction
 
 def create_user(payload: CreateUserPayload) -> str:
     """Create a new Active Directory user entry and return its distinguishedName."""
@@ -24,3 +36,135 @@ def create_user(payload: CreateUserPayload) -> str:
         raise AppError(status_code=400, error="LDAP Operation Failed", details=conn.result.get('description', 'Failed to create user'))
     
     return dn
+
+def generate_ad_compliant_password(length: int = 16) -> str:
+    """Generate a random password that meets strict Active Directory complexity rules."""
+    alphabet = string.ascii_letters + string.digits + "!@#$%^*()_+-="
+    while True:
+        password = ''.join(secrets.choice(alphabet) for _ in range(length))
+        # Ensure it contains at least one lowercase, one uppercase, one digit, and one special character
+        if (any(c.islower() for c in password)
+                and any(c.isupper() for c in password)
+                and any(c.isdigit() for c in password)
+                and any(c in "!@#$%^*()_+-=" for c in password)):
+            return password
+        
+def clone_user(payload: CloneUserPayload) -> dict:
+    # Determine the password: Use provided one or generate a random secure one
+    generated_pass = False
+    password_to_use = payload.temporary_password
+    
+    if not password_to_use:
+        password_to_use = generate_ad_compliant_password()
+        generated_pass = True
+
+    # 1. Dynamically assign source and target connections based on direction
+    if payload.direction == "b_to_a":
+        conn_source = connect_ldap_domain_b()
+        conn_target = connect_ldap_domain_a()
+        source_domain_name = "Domain B"
+        target_domain_name = "Domain A"
+    else:
+        conn_source = connect_ldap_domain_a()
+        conn_target = connect_ldap_domain_b()
+        source_domain_name = "Domain A"
+        target_domain_name = "Domain B"
+    
+    # Using try...finally to absolutely guarantee network connection cleanup
+    try:
+        # 2. Fetch user data from source domain
+        if not conn_source.search(
+            search_base=payload.source_user_dn, 
+            search_filter='(objectClass=user)', 
+            attributes=[
+                'sAMAccountName', 'givenName', 'sn', 'displayName', 
+                'mail', 'title', 'department', 'telephoneNumber'
+            ]
+        ) or not conn_source.entries:
+            raise AppError(
+                status_code=404, 
+                error="Source User Not Found", 
+                details=f"Could not find user in {source_domain_name}"
+            )
+            
+        source_entry = conn_source.entries[0]
+        
+        # 3. Prepare target DN for target domain
+        cn_value = f"{source_entry.givenName.value} {source_entry.sn.value}"
+        target_dn = f"cn={cn_value},{payload.target_ou_dn}"
+        
+        # 4. Build attribute dictionary
+        target_attrs = {
+            'objectClass': ['top', 'person', 'organizationalPerson', 'user'],
+            'cn': cn_value,
+            'sn': source_entry.sn.value,
+            'givenName': source_entry.givenName.value,
+            'displayName': source_entry.displayName.value,
+            'sAMAccountName': source_entry.sAMAccountName.value,
+            'userAccountControl': '512' 
+        }
+        
+        optional_attrs = ['mail', 'title', 'department', 'telephoneNumber']
+        for attr in optional_attrs:
+            if hasattr(source_entry, attr) and getattr(source_entry, attr).value:
+                target_attrs[attr] = getattr(source_entry, attr).value
+
+        # 5. Create the initial account structure in target domain
+        if not conn_target.add(target_dn, attributes=target_attrs):
+            raise AppError(
+                status_code=400, 
+                error="Clone Operation Failed", 
+                details=conn_target.result.get('description', f'Failed to create cloned user structure in {target_domain_name}')
+            )
+            
+        # 6. Set temporary password via secure LDAPS connection
+        try:
+            encoded_password = f'"{password_to_use}"'.encode('utf-16-le')
+            password_changes = {'unicodePwd': [(MODIFY_REPLACE, [encoded_password])]}
+            
+            # Execute modification safely over TLS
+            conn_target.modify(target_dn, password_changes)
+            
+            # Verify the LDAP result code (0 = success)
+            if conn_target.result.get('result', 0) != 0:
+                conn_target.delete(target_dn)
+                raise AppError(
+                    status_code=400, 
+                    error="Password Setup Failed", 
+                    details=conn_target.result.get('description', 'Password policy violation.')
+                )
+                
+        except Exception as e:
+            conn_target.delete(target_dn)
+            raise AppError(
+                status_code=400, 
+                error="Password Operation Exception", 
+                details=str(e)
+            )
+            
+        # 7. Enforce "User must change password at next logon"
+        # Fix: The value [0] must be explicitly passed inside the tuple list!
+        pwd_expiry_changes = {'pwdLastSet': [(MODIFY_REPLACE, [0])]}
+        
+        if not conn_target.modify(target_dn, pwd_expiry_changes):
+            raise AppError(
+                status_code=400, 
+                error="Force Password Change Failed", 
+                details=conn_target.result.get('description', 'Could not set pwdLastSet to 0')
+            )
+            
+        # Return structured data including the final temporary password
+        return {
+            "status": "success",
+            "message": f"User cloned successfully to {target_domain_name}",
+            "dn": target_dn,
+            "temporary_password": password_to_use,
+            "auto_generated": generated_pass
+        }
+
+    finally:
+        # The finally block ALWAYS runs, preventing any network socket leaks in Docker
+        if 'conn_source' in locals() and conn_source:
+            conn_source.unbind()
+        if 'conn_target' in locals() and conn_target:
+            conn_target.unbind()

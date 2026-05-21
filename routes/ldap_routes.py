@@ -58,3 +58,8 @@ def handle_delete_computer(payload: ldap_common_service.DeleteObjectPayload):
     # Delete a computer from the correct forest based on the provided domain
     result = ldap_common_service.delete_object_from_forest(payload, object_class="computer")
     return result
+
+@router.post("/user/clone", status_code=status.HTTP_201_CREATED)
+def handle_clone_user(payload: user.CloneUserPayload):
+    # This automatically returns the new rich JSON structure containing the password
+    return user.clone_user(payload)

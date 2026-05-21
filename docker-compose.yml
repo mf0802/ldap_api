@@ -1,15 +1,34 @@
-#version: '3.8'
-
 services:
-  samba-ad:
+  # Domain A: Source Domain (domainA.local)
+  samba-ad-a:
     image: smblds/smblds:latest
-    container_name: fake_active_directory
-    platform: linux/amd64 # Erzwingt Kompatibilität für Apple Silicon Macs und x86_64 Linux
+    container_name: fake_ad_domain_a
+    platform: linux/amd64
     restart: unless-stopped
     environment:
-      INSECURE_LDAP: "true" # Erlaubt unverschlüsselte Test-Logins auf Port 389
+      INSECURE_LDAP: "true"
+      REALM: "DOMAINA.LOCAL"       # Becomes DC=domainA,DC=local
+      DOMAIN: "DOMAINA"             # NetBIOS short name
+      ADMINPASS: "SecretA123!"     # Password for CN=Administrator
     ports:
-      - "389:389"   # Standard LDAP Port
-      - "636:636"   # LDAPS Port (Verschlüsselt)
+      - "389:389"   # Standard LDAP (Maps to DOMAIN_A_SERVER)
+      - "636:636"   # LDAPS
     volumes:
-      - ./entrypoint.d:/entrypoint.d # Automatisches Einpflegen von Testdaten beim Booten
+      - ./entrypoint_a.d:/entrypoint.d
+
+  # Domain B: Target Domain (samdom.example.com)
+  samba-ad-b:
+    image: smblds/smblds:latest
+    container_name: fake_ad_domain_b
+    platform: linux/amd64
+    restart: unless-stopped
+    environment:
+      INSECURE_LDAP: "true"
+      REALM: "SAMDOM.EXAMPLE.COM"  # Becomes DC=samdom,DC=example,DC=com
+      DOMAIN: "SAMDOM"              # NetBIOS short name
+      ADMINPASS: "SecretB123!"     # Password for CN=Administrator
+    ports:
+      - "3389:389"  # Standard LDAP (Maps to DOMAIN_B_SERVER)
+      - "3636:636"  # LDAPS
+    volumes:
+      - ./entrypoint_b.d:/entrypoint.d

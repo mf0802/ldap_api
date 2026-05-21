@@ -72,6 +72,31 @@ curl -X DELETE http://localhost:3000/api/user/delete \
   }'
 ```
 
+### 3. Clone User from domain A to comain B
+```bash
+curl -X POST http://localhost:3000/api/user/clone \
+  -H "X-API-Key: your_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source_user_dn": "cn=John Doe,OU=TestingOU,DC=domainA,DC=local",
+    "target_ou_dn": "OU=TestingOU,DC=samdom,DC=example,DC=com",
+    "temporary_password": "StartPassword2026!",
+    "direction": "a_to_b"
+  }'
+```
+
+### 3. Clone User from domain B to comain A
+```bash
+curl -X POST http://localhost:3000/api/user/clone \
+  -H "X-API-Key: your_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source_user_dn": "CN=Jane Taylor,OU=TestingOU,DC=samdom,DC=example,DC=com",
+    "target_ou_dn": "OU=TestingOU,DC=domainA,DC=local",
+    "temporary_password": "ReversePassword2026!",
+    "direction": "b_to_a"
+  }'
+```
 ---
 
 ## 👥 Group Management
