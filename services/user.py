@@ -5,7 +5,7 @@ from typing import Literal, Optional
 from ldap3 import MODIFY_REPLACE
 from pydantic import BaseModel
 from services.ldap_service import connect_ldap
-from services.ldap_service import connect_ldap_domain_a, connect_ldap_domain_b
+from services.ldap_service import connect_to_domain
 from errors import AppError
 
 class CreateUserPayload(BaseModel):
@@ -14,11 +14,12 @@ class CreateUserPayload(BaseModel):
     last_name: str
     ou_dn: str  # Target organizational unit DN for the new user
 
-class CloneUserPayload(BaseModel):
-    source_user_dn: str
-    target_ou_dn: str
-    temporary_password: Optional[str] = None  # Now optional
-    direction: Literal["a_to_b", "b_to_a"] = "a_to_b"  # Default direction
+class DynamicCloneUserPayload(BaseModel):
+    source_domain: str       # e.g., "domaina.local" or "test.forest.net"
+    source_user_dn: str      # Full source Distinguished Name (DN)
+    target_domain: str       # e.g., "://example.com"
+    target_ou_dn: str        # Target OU where the user should be cloned into
+    temporary_password: Optional[str] = None  # Optional, will be auto-generated if omitted
 
 def create_user(payload: CreateUserPayload) -> str:
     """Create a new Active Directory user entry and return its distinguishedName."""
@@ -49,7 +50,11 @@ def generate_ad_compliant_password(length: int = 16) -> str:
                 and any(c in "!@#$%^*()_+-=" for c in password)):
             return password
         
-def clone_user(payload: CloneUserPayload) -> dict:
+def clone_user(payload: DynamicCloneUserPayload) -> dict:
+    """
+    Clones a user from any configured source domain to any target domain,
+    copies optional attributes, sets a password, and enforces password change on next logon.
+    """
     # Determine the password: Use provided one or generate a random secure one
     generated_pass = False
     password_to_use = payload.temporary_password
@@ -58,33 +63,34 @@ def clone_user(payload: CloneUserPayload) -> dict:
         password_to_use = generate_ad_compliant_password()
         generated_pass = True
 
-    # 1. Dynamically assign source and target connections based on direction
-    if payload.direction == "b_to_a":
-        conn_source = connect_ldap_domain_b()
-        conn_target = connect_ldap_domain_a()
-        source_domain_name = "Domain B"
-        target_domain_name = "Domain A"
-    else:
-        conn_source = connect_ldap_domain_a()
-        conn_target = connect_ldap_domain_b()
-        source_domain_name = "Domain A"
-        target_domain_name = "Domain B"
+    # 1. Dynamically fetch connections for the requested domain combination
+    conn_source = connect_to_domain(payload.source_domain)
+    conn_target = connect_to_domain(payload.target_domain)
     
     # Using try...finally to absolutely guarantee network connection cleanup
     try:
-        # 2. Fetch user data from source domain
-        if not conn_source.search(
-            search_base=payload.source_user_dn, 
-            search_filter='(objectClass=user)', 
-            attributes=[
-                'sAMAccountName', 'givenName', 'sn', 'displayName', 
-                'mail', 'title', 'department', 'telephoneNumber'
-            ]
-        ) or not conn_source.entries:
+        # 2. Fetch user data from the source domain
+        from ldap3.core.exceptions import LDAPInvalidDnError # Import the specific error
+        
+        try:
+            if not conn_source.search(
+                search_base=payload.source_user_dn, 
+                search_filter='(objectClass=user)', 
+                attributes=[
+                    'sAMAccountName', 'givenName', 'sn', 'displayName', 
+                    'mail', 'title', 'department', 'telephoneNumber'
+                ]
+            ) or not conn_source.entries:
+                raise AppError(
+                    status_code=404, 
+                    error="Source User Not Found", 
+                    details=f"Could not find user in source domain '{payload.source_domain}'"
+                )
+        except LDAPInvalidDnError:
             raise AppError(
-                status_code=404, 
-                error="Source User Not Found", 
-                details=f"Could not find user in {source_domain_name}"
+                status_code=400,
+                error="Invalid DN Syntax",
+                details=f"The syntax for 'source_user_dn' ({payload.source_user_dn}) is malformed. Use format: CN=Name,OU=OU,DC=Domain,DC=com"
             )
             
         source_entry = conn_source.entries[0]
@@ -93,7 +99,8 @@ def clone_user(payload: CloneUserPayload) -> dict:
         cn_value = f"{source_entry.givenName.value} {source_entry.sn.value}"
         target_dn = f"cn={cn_value},{payload.target_ou_dn}"
         
-        # 4. Build attribute dictionary
+        # 4. Build attribute dictionary for the new target user
+        # 'userAccountControl': '512' enables the account immediately (Normal Account)
         target_attrs = {
             'objectClass': ['top', 'person', 'organizationalPerson', 'user'],
             'cn': cn_value,
@@ -104,17 +111,18 @@ def clone_user(payload: CloneUserPayload) -> dict:
             'userAccountControl': '512' 
         }
         
+        # Dynamically copy optional attributes if they exist in the source account
         optional_attrs = ['mail', 'title', 'department', 'telephoneNumber']
         for attr in optional_attrs:
             if hasattr(source_entry, attr) and getattr(source_entry, attr).value:
                 target_attrs[attr] = getattr(source_entry, attr).value
 
-        # 5. Create the initial account structure in target domain
+        # 5. Create the initial account structure in the target domain
         if not conn_target.add(target_dn, attributes=target_attrs):
             raise AppError(
                 status_code=400, 
                 error="Clone Operation Failed", 
-                details=conn_target.result.get('description', f'Failed to create cloned user structure in {target_domain_name}')
+                details=conn_target.result.get('description', f"Failed to create cloned user structure in '{payload.target_domain}'")
             )
             
         # 6. Set temporary password via secure LDAPS connection
@@ -143,7 +151,7 @@ def clone_user(payload: CloneUserPayload) -> dict:
             )
             
         # 7. Enforce "User must change password at next logon"
-        # Fix: The value [0] must be explicitly passed inside the tuple list!
+        # The value [0] must be explicitly passed inside the tuple list
         pwd_expiry_changes = {'pwdLastSet': [(MODIFY_REPLACE, [0])]}
         
         if not conn_target.modify(target_dn, pwd_expiry_changes):
@@ -153,10 +161,10 @@ def clone_user(payload: CloneUserPayload) -> dict:
                 details=conn_target.result.get('description', 'Could not set pwdLastSet to 0')
             )
             
-        # Return structured data including the final temporary password
+        # Return rich structured data including the dynamic temporary password
         return {
             "status": "success",
-            "message": f"User cloned successfully to {target_domain_name}",
+            "message": f"User cloned successfully to '{payload.target_domain}'",
             "dn": target_dn,
             "temporary_password": password_to_use,
             "auto_generated": generated_pass

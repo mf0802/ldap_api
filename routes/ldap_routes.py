@@ -60,6 +60,6 @@ def handle_delete_computer(payload: ldap_common_service.DeleteObjectPayload):
     return result
 
 @router.post("/user/clone", status_code=status.HTTP_201_CREATED)
-def handle_clone_user(payload: user.CloneUserPayload):
+def handle_clone_user(payload: user.DynamicCloneUserPayload):
     # This automatically returns the new rich JSON structure containing the password
     return user.clone_user(payload)
