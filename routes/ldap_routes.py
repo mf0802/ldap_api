@@ -30,14 +30,14 @@ def handle_create_group(payload: group.CreateGroupPayload):
     # Create a new group object in LDAP and return the structured response
     return group.create_group(payload)
 
-@router.post("/group/batch")
+@router.post("/group/batch", status_code=status.HTTP_200_OK, response_model=group.BatchGroupResponse)
 def handle_batch_group(payload: group.BatchGroupPayload):
-    # Handle batch operations for group creation or update
+    # Handle batch operations for group creation or update and return the structured response
     return group.handle_batch(payload)
 
-@router.patch("/group/owner", status_code=status.HTTP_200_OK)
+@router.patch("/group/owner", status_code=status.HTTP_200_OK, response_model=group.GroupOwnershipResponse)
 def handle_update_group_ownership(payload: group.UpdateGroupOwnershipPayload):
-    # Update the group owner attribute and return the operation result
+    # Update the group owner attribute and return the structured response
     return group.update_group_ownership(payload)
 
 @router.post("/object/query", status_code=status.HTTP_200_OK)
@@ -64,3 +64,18 @@ def handle_delete_computer(payload: ldap_common_service.DeleteObjectPayload):
 def handle_clone_user(payload: user.DynamicCloneUserPayload):
     # This automatically returns the new rich JSON structure containing the password
     return user.clone_user(payload)
+
+@router.post("/object/batch/modify", status_code=status.HTTP_200_OK, response_model=ldap_common_service.GenericBatchResponse)
+def handle_batch_modify_attributes(payload: ldap_common_service.BatchModifyAttributesPayload):
+    # Batch modify specified attributes for any LDAP object type
+    return ldap_common_service.handle_generic_batch_modify(payload)
+
+@router.post("/user/lockout/check", status_code=status.HTTP_200_OK, response_model=user.UserLockoutStatusResponse)
+def handle_check_user_lockout(payload: user.CheckLockoutPayload):
+    # Check if the specified user account is currently locked out
+    return user.check_user_lockout(payload.distinguished_name)
+
+@router.post("/user/unlock", status_code=status.HTTP_200_OK, response_model=user.UserUnlockResponse)
+def handle_unlock_user(payload: user.CheckLockoutPayload):
+    # Manually unlock a locked Active Directory user account
+    return user.unlock_user(payload.distinguished_name)

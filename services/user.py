@@ -1,6 +1,7 @@
 import secrets
 import string
-from typing import Literal, Optional
+from typing import Optional
+from datetime import datetime, timedelta, timezone
 
 from ldap3 import MODIFY_REPLACE
 from pydantic import BaseModel
@@ -34,6 +35,20 @@ class UserActivationResponse(BaseModel):
     message: str
     distinguished_name: str
     generated_password: str
+
+class UserLockoutStatusResponse(BaseModel):
+    status: str = "success"
+    message: str
+    distinguished_name: str
+    is_locked: bool
+
+class CheckLockoutPayload(BaseModel):
+    distinguished_name: str
+
+class UserUnlockResponse(BaseModel):
+    status: str = "success"
+    message: str
+    distinguished_name: str
 
 def create_user(payload: CreateUserPayload) -> UserCreationResponse:
     """
@@ -260,3 +275,122 @@ def clone_user(payload: DynamicCloneUserPayload) -> dict:
             conn_source.unbind()
         if 'conn_target' in locals() and conn_target:
             conn_target.unbind()
+
+def check_user_lockout(dn: str) -> UserLockoutStatusResponse:
+    """
+    Check if a user account is currently locked out in Active Directory or Samba.
+    Handles both raw Win32 formats and pre-parsed ldap3 datetime/timedelta objects safely.
+    """
+    try:
+        conn = connect_ldap()
+        
+        # 1. Fetch user's lockoutTime attribute
+        if not conn.search(search_base=dn, search_filter="(objectClass=user)", attributes=['lockoutTime']):
+            raise AppError(
+                status_code=404,
+                error="not_found",
+                details=f"User object '{dn}' could not be found."
+            )
+            
+        user_entry = conn.entries[0]
+        lockout_time_val = user_entry.lockoutTime.value if 'lockoutTime' in user_entry else None
+
+        # If lockoutTime is missing, None, or 0, the account is absolutely not locked
+        if not lockout_time_val or lockout_time_val == 0:
+            return UserLockoutStatusResponse(
+                message="The user account is not locked out.",
+                distinguished_name=dn,
+                is_locked=False
+            )
+
+        # 2. Convert lockoutTime to a standard timezone-aware datetime object
+        if isinstance(lockout_time_val, datetime):
+            # ldap3 already parsed it into a datetime object
+            # Ensure it is timezone-aware (AD/Samba operate in UTC)
+            if lockout_time_val.tzinfo is None:
+                lockout_datetime = lockout_time_val.replace(tzinfo=timezone.utc)
+            else:
+                lockout_datetime = lockout_time_val.astimezone(timezone.utc)
+        else:
+            # Fallback: Process raw Win32 Epoch integer (100-nanosecond intervals since Jan 1, 1601)
+            lockout_timestamp = (int(lockout_time_val) - 116444736000000000) / 10000000
+            lockout_datetime = datetime.fromtimestamp(lockout_timestamp, tz=timezone.utc)
+
+        # 3. Fetch the Domain's Lockout Duration Policy
+        dc_index = dn.upper().find("DC=")
+        domain_root_dn = dn[dc_index:] if dc_index != -1 else dn
+
+        if not conn.search(search_base=domain_root_dn, search_filter="(objectClass=domain)", attributes=['lockoutDuration']):
+            raise AppError(
+                status_code=500,
+                error="internal_server_error",
+                details="Failed to read the domain lockout policy duration."
+            )
+
+        lockout_duration_val = conn.entries[0].lockoutDuration.value
+
+        # Robust Type-Handling for Lockout Duration
+        if isinstance(lockout_duration_val, timedelta):
+            lockout_duration_seconds = abs(lockout_duration_val.total_seconds())
+        else:
+            # Fallback for raw negative 64-bit intervals (100-nanosecond steps)
+            lockout_duration_seconds = abs(int(lockout_duration_val)) / 10000000
+
+        # 4. Calculate if the lockout has expired
+        # Calculate time passed since the lockout occurred
+        seconds_since_lock = (datetime.now(timezone.utc) - lockout_datetime).total_seconds()
+        
+        # The user is only locked if the elapsed time is LESS than the policy duration
+        is_currently_locked = seconds_since_lock < lockout_duration_seconds
+        
+        message = "The user account is currently locked out." if is_currently_locked else "The user lockout has expired (account is automatically unlocked)."
+
+        return UserLockoutStatusResponse(
+            message=message,
+            distinguished_name=dn,
+            is_locked=is_currently_locked
+        )
+
+    except AppError as ae:
+        raise ae
+    except Exception as e:
+        raise AppError(
+            status_code=500,
+            error="internal_server_error",
+            details=f"An error occurred while checking lockout status: {str(e)}"
+        )
+    
+def unlock_user(dn: str) -> UserUnlockResponse:
+    """
+    Manually unlocks a locked Active Directory or Samba user account
+    by resetting the lockoutTime attribute to 0.
+    """
+    try:
+        conn = connect_ldap()
+        
+        # Define modification to clear the lockout timestamp (0 = Unlocked)
+        modifications = {
+            'lockoutTime': [(MODIFY_REPLACE, ['0'])]
+        }
+        
+        # Execute the unlock operation in Active Directory
+        if not conn.modify(dn, changes=modifications):
+            raise AppError(
+                status_code=400,
+                error="bad_request",
+                details=conn.result.get('description', 'Failed to unlock the user account.')
+            )
+            
+        return UserUnlockResponse(
+            message="The user account has been successfully unlocked.",
+            distinguished_name=dn
+        )
+
+    except AppError as ae:
+        raise ae
+    except Exception as e:
+        raise AppError(
+            status_code=500,
+            error="internal_server_error",
+            details=f"An unexpected error occurred during user unlock: {str(e)}"
+        )

@@ -28,10 +28,22 @@ class UpdateGroupOwnershipPayload(BaseModel):
     add_owners: Optional[str] = None     # Comma-separated emails to add as owners
     delete_owners: Optional[str] = None  # Comma-separated emails to remove from owners
 
+class GroupOwnershipResponse(BaseModel):
+    status: str = "success"
+    message: str
+    distinguished_name: str
+    updated_info: str
+
 class BatchGroupPayload(BaseModel):
     action: str  # "add" or "remove"
     group_names: List[str]
     user_names: List[str]
+
+class BatchGroupResponse(BaseModel):
+    status: str = "success"
+    message: str
+    successful: List[str]
+    failed: List[str]
 
 # =====================================================================
 # REGEX HELPERS FOR OWNER METADATA IN THE INFO ATTRIBUTE
@@ -109,71 +121,141 @@ def create_group(payload: CreateGroupPayload) -> GroupCreationResponse:
             details=f"An unexpected error occurred during group creation: {str(e)}"
         )
 
-def update_group_ownership(payload: UpdateGroupOwnershipPayload) -> dict:
-    """Update the Owners list inside the group's info attribute."""
-    conn = connect_ldap()
-    group_dn = find_dn(conn, payload.group_name, "group")
-    
-    # 1. Read the current info attribute from the group
-    conn.search(search_base=group_dn, search_filter="(objectClass=group)", search_scope=SUBTREE, attributes=['info']) # type: ignore
-    if not conn.entries:
-        raise AppError(status_code=404, error="Not Found", details=f"Group '{payload.group_name}' not found during read.")
-    
-    raw_info = conn.entries[0].info.value if conn.entries[0].info else ""
-    current_info_text = str(raw_info) if raw_info else ""
-
-    # 2. Extract existing owner line and any remaining text
-    owner_line, remaining_text = extract_owner_line(current_info_text)
-    if not owner_line:
-        owner_line = "Owners:"
-
-    new_owner_line = modify_owners(owner_line, payload.add_owners, payload.delete_owners)
-
-    # 3. Reassemble info text while preserving additional notes
-    if remaining_text:
-        final_info_string = f"{new_owner_line}\n{remaining_text}" if new_owner_line else remaining_text
-    else:
-        final_info_string = new_owner_line
-
-    # 4. Write the updated info back to Active Directory
-    changes = {
-        'info': [(MODIFY_REPLACE, [final_info_string.strip()])]
-    }
-    
-    if not conn.modify(group_dn, changes):
-        raise AppError(status_code=400, error="LDAP Operation Failed", details=conn.result.get('description', 'Could not update group ownership.'))
+def update_group_ownership(payload: UpdateGroupOwnershipPayload) -> GroupOwnershipResponse:
+    """
+    Update the Owners list inside the group's info attribute.
+    Returns a standardized API response model with the final info string.
+    """
+    try:
+        conn = connect_ldap()
+        group_dn = find_dn(conn, payload.group_name, "group")
         
-    return {"status": "success", "updated_info": final_info_string}
+        # 1. Read the current info attribute from the group
+        # Note: SUBTREE scope should be imported from your ldap library
+        conn.search(
+            search_base=group_dn, 
+            search_filter="(objectClass=group)", 
+            search_scope=SUBTREE, 
+            attributes=['info']
+        )
+        
+        if not conn.entries:
+            raise AppError(
+                status_code=404, 
+                error="not_found", 
+                details=f"Group '{payload.group_name}' not found during read."
+            )
+        
+        raw_info = conn.entries[0].info.value if conn.entries[0].info else ""
+        current_info_text = str(raw_info) if raw_info else ""
 
-def handle_batch(payload: BatchGroupPayload) -> dict:
-    """Batch add or remove user members to/from groups."""
-    conn = connect_ldap()
-    successful = []
-    failed = []
-    
-    for group_raw in payload.group_names:
-        try:
-            group_dn = find_dn(conn, group_raw, "group")
-        except AppError as e:
-            failed.append(f"{group_raw}: {e.details}")
-            continue
+        # 2. Extract existing owner line and any remaining text
+        owner_line, remaining_text = extract_owner_line(current_info_text)
+        if not owner_line:
+            owner_line = "Owners:"
+
+        new_owner_line = modify_owners(owner_line, payload.add_owners, payload.delete_owners)
+
+        # 3. Reassemble info text while preserving additional notes
+        if remaining_text:
+            final_info_string = f"{new_owner_line}\n{remaining_text}" if new_owner_line else remaining_text
+        else:
+            final_info_string = new_owner_line
+
+        # 4. Write the updated info back to Active Directory
+        changes = {
+            'info': [(MODIFY_REPLACE, [final_info_string.strip()])]
+        }
+        
+        if not conn.modify(group_dn, changes):
+            raise AppError(
+                status_code=400, 
+                error="bad_request", 
+                details=conn.result.get('description', 'Could not update group ownership.')
+            )
             
-        for user_raw in payload.user_names:
+        # Return structured data that automatically serializes to clean JSON
+        return GroupOwnershipResponse(
+            message=f"Group ownership for '{payload.group_name}' has been updated successfully.",
+            distinguished_name=group_dn,
+            updated_info=final_info_string
+        )
+
+    except AppError as ae:
+        # Re-raise expected application errors
+        raise ae
+    except Exception as e:
+        # Catch unexpected connection, search or modification errors
+        raise AppError(
+            status_code=500,
+            error="internal_server_error",
+            details=f"An unexpected error occurred while updating group ownership: {str(e)}"
+        )
+
+
+def handle_batch(payload: BatchGroupPayload) -> BatchGroupResponse:
+    """
+    Batch add or remove user members to/from groups.
+    Returns a standardized API response model containing successful and failed operations.
+    """
+    try:
+        conn = connect_ldap()
+        successful = []
+        failed = []
+        
+        # Validate action before processing loops
+        if payload.action not in ["add", "remove"]:
+            raise AppError(
+                status_code=400,
+                error="bad_request",
+                details=f"Invalid action '{payload.action}' provided. Must be 'add' or 'remove'."
+            )
+        
+        for group_raw in payload.group_names:
             try:
-                user_dn = find_dn(conn, user_raw, "user")
-                
-                if payload.action == "add":
-                    changes = {'member': [(MODIFY_ADD, [user_dn])]}
-                elif payload.action == "remove":
-                    changes = {'member': [(MODIFY_DELETE, [user_dn])]}
-                else:
-                    return {"successful": successful, "failed": failed + ["Invalid action provided"]}
-                
-                if conn.modify(group_dn, changes):
-                    successful.append(f"{user_raw} -> {group_raw}")
-                else:
-                    failed.append(f"Error {user_raw} -> {group_raw}: {conn.result.get('description', 'Modification failed')}")
+                group_dn = find_dn(conn, group_raw, "group")
             except AppError as e:
-                failed.append(f"{user_raw}: {e.details}")
+                failed.append(f"Group lookup failed ({group_raw}): {e.details}")
+                continue
                 
-    return {"successful": successful, "failed": failed}
+            for user_raw in payload.user_names:
+                try:
+                    user_dn = find_dn(conn, user_raw, "user")
+                    
+                    if payload.action == "add":
+                        changes = {'member': [(MODIFY_ADD, [user_dn])]}
+                    elif payload.action == "remove":
+                        changes = {'member': [(MODIFY_DELETE, [user_dn])]}
+                    
+                    if conn.modify(group_dn, changes):
+                        successful.append(f"Successfully processed {payload.action}: User '{user_raw}' -> Group '{group_raw}'")
+                    else:
+                        failed.append(f"LDAP Error {user_raw} -> {group_raw}: {conn.result.get('description', 'Modification failed')}")
+                except AppError as e:
+                    failed.append(f"User lookup failed ({user_raw}): {e.details}")
+                    
+        # Determine summary message based on the outcomes
+        if not successful and failed:
+            message = "All batch operations failed."
+        elif successful and failed:
+            message = "Batch operations completed with some errors."
+        else:
+            message = "All batch operations completed successfully."
+            
+        return BatchGroupResponse(
+            message=message,
+            successful=successful,
+            failed=failed
+        )
+
+    except AppError as ae:
+        # Re-raise expected application validation errors
+        raise ae
+    except Exception as e:
+        # Catch unexpected connection or network errors
+        raise AppError(
+            status_code=500,
+            error="internal_server_error",
+            details=f"An unexpected error occurred during batch execution: {str(e)}"
+        )
+

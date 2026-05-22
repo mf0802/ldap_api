@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Dict
+from typing import Any, Dict, List
 from pydantic import BaseModel
 from services.ldap_service import connect_ldap
 from errors import AppError
@@ -24,9 +24,21 @@ class ObjectDeletionResponse(BaseModel):
     message: str
     distinguished_name: str
 
+class BatchModifyAttributesPayload(BaseModel):
+    sam_account_names: List[str]
+    object_class: str  # e.g., "user", "group", "computer"
+    # Example for attributes: {"description": "Updated via API", "title": "Engineer"}
+    attributes: Dict[str, Any]
+
+class GenericBatchResponse(BaseModel):
+    status: str = "success"
+    message: str
+    successful: List[str]
+    failed: List[str]
+
 ALLOWED_ATTRIBUTES = {
     "user": [
-        "cn", "sAMAccountName", "givenName", "sn", "mail", 
+        "cn", "sAMAccountName", "givenName", "sn", "mail", "description", "lockoutTime",
         "department", "title", "whenCreated", "userAccountControl", "telephoneNumber","memberOf"
     ],
     "group": [
@@ -34,7 +46,7 @@ ALLOWED_ATTRIBUTES = {
         "member", "whenCreated", "memberOf"
     ],
     "computer": [
-        "cn", "sAMAccountName", "operatingSystem", "operatingSystemVersion", 
+        "cn", "sAMAccountName", "operatingSystem", "operatingSystemVersion", "description",
         "location", "whenCreated", "memberOf"
     ]
 }
@@ -206,3 +218,69 @@ def modify_attributes(payload: ModifyMultipleAttributesPayload) -> dict:
         "dn": payload.target_dn,
         "updated": payload.attributes
     }
+
+def handle_generic_batch_modify(payload: BatchModifyAttributesPayload) -> GenericBatchResponse:
+    """
+    Batch update specified attributes for any type of LDAP object.
+    Returns a standardized API response model with detailed success/failure states.
+    """
+    try:
+        conn = connect_ldap()
+        successful = []
+        failed = []
+        
+        if not payload.attributes:
+            raise AppError(
+                status_code=400,
+                error="bad_request",
+                details="No attributes provided for modification."
+            )
+            
+        # Build the dynamic changes dictionary for the ldap3 modify operation
+        # We use MODIFY_REPLACE as the standard action for attribute updates
+        changes = {}
+        for attr_name, attr_value in payload.attributes.items():
+            # Ensure the value is wrapped in a list as required by ldap3 changes format
+            value_list = attr_value if isinstance(attr_value, list) else [attr_value]
+            changes[attr_name] = [(MODIFY_REPLACE, value_list)]
+            
+        # Iterate over all provided objects
+        for sam_name in payload.sam_account_names:
+            try:
+                # Resolve the DN dynamically based on sAMAccountName and objectClass
+                object_dn = find_dn(conn, sam_name, payload.object_class)
+                
+                # Execute the modification for the current object
+                if conn.modify(object_dn, changes):
+                    successful.append(f"Successfully updated {payload.object_class} '{sam_name}'")
+                else:
+                    error_desc = conn.result.get('description', 'Modification failed')
+                    failed.append(f"LDAP Error on '{sam_name}': {error_desc}")
+                    
+            except AppError as e:
+                failed.append(f"Lookup failed for '{sam_name}' ({payload.object_class}): {e.details}")
+                
+        # Determine the final summary message
+        if not successful and failed:
+            message = f"All batch modifications for {payload.object_class} objects failed."
+        elif successful and failed:
+            message = f"Batch modifications for {payload.object_class} objects completed with some errors."
+        else:
+            message = f"All batch modifications for {payload.object_class} objects completed successfully."
+            
+        return GenericBatchResponse(
+            message=message,
+            successful=successful,
+            failed=failed
+        )
+
+    except AppError as ae:
+        # Re-raise expected validation errors
+        raise ae
+    except Exception as e:
+        # Catch unexpected connection, forest lookup, or network errors
+        raise AppError(
+            status_code=500,
+            error="internal_server_error",
+            details=f"An unexpected error occurred during generic batch modification: {str(e)}"
+        )

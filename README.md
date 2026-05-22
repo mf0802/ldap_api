@@ -234,6 +234,23 @@ curl -X POST http://localhost:3000/api/object/query \
   }'
 ```
 
+### 3. Batch modify attributes
+Batch based modification of AD attributes by object type (user, computer, group)
+
+```bash
+curl -X POST http://localhost:3000/api/object/batch/modify \
+  -H "X-API-Key: your_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sam_account_names": ["mmustermann", "jdoe"],
+    "object_class": "user",
+    "attributes": {
+      "description": "Updated via API Batch Operations",
+      "title": "Senior IT Engineer"
+    }
+  }'
+```
+
 ---
 
 ## 👤 User Management
@@ -284,6 +301,26 @@ curl -X POST http://localhost:3000/api/user/enable \
   -H "Content-Type: application/json" \
   -d '{
     "distinguished_name": "CN=Max Mustermann,OU=TestingOU,DC=samdom,DC=example,DC=com"
+  }'
+```
+
+### 5. Check User account locked state
+```bash
+curl -X POST http://localhost:3000/api/user/lockout/check \
+  -H "X-API-Key: your_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "distinguished_name": "CN=Alex Wilson,OU=TestingOU,DC=samdom,DC=example,DC=com"
+  }'
+```
+
+### 6. Unlock User account
+```bash
+curl -X POST http://localhost:3000/api/user/unlock \
+  -H "X-API-Key: your_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "distinguished_name": "CN=Alex Wilson,OU=TestingOU,DC=samdom,DC=example,DC=com"
   }'
 ```
 ---
