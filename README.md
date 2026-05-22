@@ -229,7 +229,37 @@ DOMAIN_C_SEARCH_BASE=DC=test,DC=forest,DC=net
 ```
 ---
 
-## 🛠 General Object Operations
+## 🛠 General Object Operations/Routes
+
+```text
++------------------------------------+------------------------------------------------------------------------+
+| ROUTE                              | DESCRIPTION                                                            |
++------------------------------------+------------------------------------------------------------------------+
+GENERAL HELPERS
+| POST   /object/attribute/modify    | Modifies multiple LDAP attributes for any object type.                 |
+| POST   /object/query               | Queries object attributes by sAMAccountName and object class.          |
+| POST   /object/batch/modify        | Batch modifies specified attributes for any LDAP object type.          |
+| POST   /object/search/multi-forest | Searches for an object by sAMAccountName across all configured forests.|
++------------------------------------+------------------------------------------------------------------------+
+USER
+| POST   /user/create                | Creates a new user object in LDAP.                                     |
+| POST   /user/enable                | Sets an AD-compliant password and enables the user account.            |
+| POST   /user/clone                 | Clones a user and returns a rich JSON structure including password.    |
+| POST   /user/lockout/check         | Checks if the specified user account is currently locked out.          |
+| POST   /user/unlock                | Manually unlocks a locked Active Directory user account.               |
+| DELETE /user/delete                | Deletes a user from the correct forest based on the provided domain.   |
++------------------------------------+------------------------------------------------------------------------+
+GROUP
+| POST   /group/create               | Creates a new group object in LDAP.                                    |
+| POST   /group/batch                | Handles batch operations for group creation or update.                 |
+| PATCH  /group/owner                | Updates the group owner attribute.                                     |
+| DELETE /group/delete               | Deletes a group from the correct forest based on the provided domain.  |
++------------------------------------+------------------------------------------------------------------------+
+COMPUTER
+| POST   /computer/create            | Creates a new computer object in LDAP.                                 |
+| DELETE /computer/delete            | Deletes a computer from the correct forest based on the domain.        |
++------------------------------------+------------------------------------------------------------------------+
+```
 
 ### 1. Universally Modify Attribute
 Modifies a specific attribute of any existing LDAP object (User, Group, or Computer) using `MODIFY_REPLACE`.
@@ -249,7 +279,7 @@ curl -X POST http://localhost:3000/api/object/attribute/modify \
   }'
 ```
 
-### 2. Query Object Attributes
+### 2. Query single Object Attributes
 Retrieves all whitelisted attributes of an object based on its `sAMAccountName`.
 
 ```bash
