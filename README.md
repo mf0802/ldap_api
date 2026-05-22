@@ -281,7 +281,9 @@ curl -X DELETE http://localhost:3000/api/user/delete \
   }'
 ```
 
-### 3. Clone User from domain B to comain A and share new password
+### 3. Clone User from domain B to domain A and share new password
+You can specify the users temporary password using optional argument: `temporary_password`
+
 ```bash
 curl -X POST http://localhost:3000/api/user/clone \
   -H "X-API-Key: your_api_key_here"" \
@@ -329,6 +331,7 @@ curl -X POST http://localhost:3000/api/user/unlock \
 
 ### 1. Create Group
 Creates a new security group inside a specific Organizational Unit (OU).
+Use the optional argument `"info":"Owners:test1@samdom.com;"` if you want to set the owners during creation.
 
 ```bash
 curl -X POST http://localhost:3000/api/group/create \
