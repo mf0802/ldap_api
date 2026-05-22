@@ -254,6 +254,10 @@ All requests must include the API key in the HTTP header:
 API_PORT=3000
 X_API_KEY=your_api_key_here
 
+# LDAP Retry Configuration
+LDAP_MAX_RETRIES=3
+LDAP_RETRY_DELAY_SECS=2
+
 # === DOMAIN A ===
 DOMAIN_A_NAME=domaina.local
 DOMAIN_A_SERVER=ldaps://localhost:636

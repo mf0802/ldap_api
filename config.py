@@ -10,10 +10,13 @@ class LdapConfig:
         self.api_key = os.getenv("X_API_KEY") or os.getenv("LOCAL_DEVELOPMENT_KEY")
         
         # Backward compatibility aliases pointing to Domain B
-        self.url = os.getenv("DOMAIN_B_SERVER", "ldaps://localhost:3636")
-        self.bind_dn = os.getenv("DOMAIN_B_USER")
-        self.bind_pw = os.getenv("DOMAIN_B_PASSWORD")
-        self.search_base = os.getenv("DOMAIN_B_SEARCH_BASE", "DC=samdom,DC=example,DC=com")
+        self.url: str = os.getenv("DOMAIN_B_SERVER", "ldaps://localhost:3636")
+        self.bind_dn: str = os.getenv("DOMAIN_B_USER","")
+        self.bind_pw: str = os.getenv("DOMAIN_B_PASSWORD", "")
+        self.search_base: str = os.getenv("DOMAIN_B_SEARCH_BASE", "DC=samdom,DC=example,DC=com")
+
+        self.LDAP_MAX_RETRIES = int(os.getenv("LDAP_MAX_RETRIES", 3))
+        self.LDAP_RETRY_DELAY_SECS = int(os.getenv("LDAP_RETRY_DELAY_SECS", 2))
         
         # Multi-forest configuration loaded 100% from environment variables
         self.forests = {
