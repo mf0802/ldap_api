@@ -79,3 +79,8 @@ def handle_check_user_lockout(payload: user.CheckLockoutPayload):
 def handle_unlock_user(payload: user.CheckLockoutPayload):
     # Manually unlock a locked Active Directory user account
     return user.unlock_user(payload.distinguished_name)
+
+@router.post("/object/search/multi-forest", status_code=status.HTTP_200_OK, response_model=ldap_common_service.MultiForestSearchResponse)
+def handle_multi_forest_search(payload: ldap_common_service.MultiForestSearchPayload):
+    # Search for an object by sAMAccountName across all configured AD forests (returns all duplicates)
+    return ldap_common_service.search_object_across_forests(payload)

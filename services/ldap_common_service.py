@@ -1,10 +1,11 @@
 import json
 import os
+import string
 from typing import Any, Dict, List
 from pydantic import BaseModel
 from services.ldap_service import connect_ldap
 from errors import AppError
-from ldap3 import Connection, SUBTREE, MODIFY_REPLACE
+from ldap3 import SIMPLE, Connection, SUBTREE, MODIFY_REPLACE, NONE, Server
 from config import settings
 
 class ModifyMultipleAttributesPayload(BaseModel):
@@ -35,6 +36,20 @@ class GenericBatchResponse(BaseModel):
     message: str
     successful: List[str]
     failed: List[str]
+
+class MultiForestSearchPayload(BaseModel):
+    sam_account_name: str
+
+class DiscoveredObject(BaseModel):
+    found_in_domain: str
+    distinguished_name: str
+    attributes: Dict[str, Any]
+
+class MultiForestSearchResponse(BaseModel):
+    status: str = "success"
+    message: str
+    total_matches: int
+    matches: List[DiscoveredObject]
 
 ALLOWED_ATTRIBUTES = {
     "user": [
@@ -284,3 +299,100 @@ def handle_generic_batch_modify(payload: BatchModifyAttributesPayload) -> Generi
             error="internal_server_error",
             details=f"An unexpected error occurred during generic batch modification: {str(e)}"
         )
+
+def search_object_across_forests(payload: MultiForestSearchPayload) -> MultiForestSearchResponse:
+    """
+    Searches for all LDAP objects matching the sAMAccountName across all 
+    dynamically configured domains in the .env file.
+    Returns a list of all matches found across all forests.
+    """
+    domains = []
+    matches = []
+    
+    # 1. Dynamically discover all configured domains from .env
+    for letter in string.ascii_uppercase:
+        prefix = f"DOMAIN_{letter}_"
+        domain_name = os.getenv(f"{prefix}NAME")
+        
+        if not domain_name:
+            break
+            
+        domains.append({
+            "name": domain_name,
+            "server": os.getenv(f"{prefix}SERVER"),
+            "user": os.getenv(f"{prefix}USER"),
+            "password": os.getenv(f"{prefix}PASSWORD"),
+            "search_base": os.getenv(f"{prefix}SEARCH_BASE")
+        })
+
+    if not domains:
+        raise AppError(
+            status_code=500,
+            error="internal_server_error",
+            details="No AD domains were detected or configured in the environment."
+        )
+
+    search_filter = f"(sAMAccountName={payload.sam_account_name})"
+    requested_attributes = ['objectClass', 'sAMAccountName', 'displayName', 'description', 'mail', 'userAccountControl']
+
+    # 2. Iterate through all domains and collect ALL matches
+    for domain in domains:
+        if not domain["server"] or not domain["search_base"]:
+            continue
+            
+        try:
+            # Fixed Pylance warning by using NONE constant instead of None
+            server = Server(domain["server"], get_info=NONE)
+            conn = Connection(
+                server, 
+                user=domain["user"], 
+                password=domain["password"], 
+                authentication=SIMPLE,
+                auto_bind=True
+            )
+            
+            conn.search(
+                search_base=domain["search_base"],
+                search_filter=search_filter,
+                search_scope=SUBTREE,
+                attributes=requested_attributes
+            )
+            
+            # If matches are found in this domain, append them to our list
+            if conn.entries:
+                for entry in conn.entries:
+                    attributes_dict = {}
+                    for attr_name in entry.entry_attributes:
+                        val = entry[attr_name].value
+                        if isinstance(val, list) and len(val) == 1:
+                            attributes_dict[attr_name] = val
+                        else:
+                            attributes_dict[attr_name] = val
+
+                    matches.append(
+                        DiscoveredObject(
+                            found_in_domain=domain["name"],
+                            distinguished_name=entry.entry_dn,
+                            attributes=attributes_dict
+                        )
+                    )
+                
+            conn.unbind()
+            
+        except Exception as e:
+            print(f"Failed to query forest {domain['name']}: {str(e)}")
+            continue
+
+    # 3. Check if we found at least one match across all forests
+    if not matches:
+        raise AppError(
+            status_code=404,
+            error="not_found",
+            details=f"Object with sAMAccountName '{payload.sam_account_name}' could not be found in any configured forest."
+        )
+        
+    return MultiForestSearchResponse(
+        message=f"Search completed. Found {len(matches)} matching object(s) across forests.",
+        total_matches=len(matches),
+        matches=matches
+    )
