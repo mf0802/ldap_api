@@ -199,6 +199,34 @@ All requests must include the API key in the HTTP header:
 * **Header Name:** `X-API-Key`
 * **Value:** `your_api_key_here`
 
+
+## ⚙️ Fake `.env` example
+
+```bash
+API_PORT=3000
+X_API_KEY=your_api_key_here
+
+# === DOMAIN A ===
+DOMAIN_A_NAME=domaina.local
+DOMAIN_A_SERVER=ldaps://localhost:636
+DOMAIN_A_USER=CN=Administrator,CN=Users,DC=domainA,DC=local
+DOMAIN_A_PASSWORD=P@ssW0rd123
+DOMAIN_A_SEARCH_BASE=DC=domainA,DC=local
+
+# === DOMAIN B ===
+DOMAIN_B_NAME=samdom.example.com
+DOMAIN_B_SERVER=ldaps://localhost:3636
+DOMAIN_B_USER=CN=Administrator,CN=Users,DC=samdom,DC=example,DC=com
+DOMAIN_B_PASSWORD=P@ssW0rd123
+DOMAIN_B_SEARCH_BASE=DC=samdom,DC=example,DC=com
+
+# === DOMAIN C ===
+DOMAIN_C_NAME=test.forest.net
+DOMAIN_C_SERVER=ldaps://localhost:4636
+DOMAIN_C_USER=CN=Administrator,CN=Users,DC=test,DC=forest,DC=net
+DOMAIN_C_PASSWORD=P@ssW0rd123
+DOMAIN_C_SEARCH_BASE=DC=test,DC=forest,DC=net
+```
 ---
 
 ## 🛠 General Object Operations
@@ -251,6 +279,17 @@ curl -X POST http://localhost:3000/api/object/batch/modify \
   }'
 ```
 
+### 4. Multi-Forest query option
+This uses the domain information hostet in the `.env` file to go through each domain to query by sAMAccountName.
+
+```bash
+curl -X POST http://localhost:3000/api/object/search/multi-forest \
+  -H "X-API-Key: your_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sam_account_name": "awilson"
+  }'
+```
 ---
 
 ## 👤 User Management
