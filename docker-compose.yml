@@ -32,3 +32,22 @@ services:
       - "3636:636"  # LDAPS
     volumes:
       - ./entrypoint_b.d:/entrypoint.d
+  
+  # ==========================================
+  # Domain C: External Test Domain (test.forest.net)
+  # ==========================================
+  samba-ad-c:
+    image: smblds/smblds:latest
+    container_name: fake_ad_domain_c
+    platform: linux/amd64
+    restart: unless-stopped
+    environment:
+      INSECURE_LDAP: "true"
+      REALM: "TEST.FOREST.NET"
+      DOMAIN: "TESTFOREST"
+      ADMINPASS: "SecretC123!"
+    ports:
+      - "4389:389"
+      - "4636:636"
+    volumes:
+      - ./entrypoint_c.d:/entrypoint.d
