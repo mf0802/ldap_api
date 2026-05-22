@@ -264,7 +264,7 @@ curl -X DELETE http://localhost:3000/api/user/delete \
   }'
 ```
 
-### 3. Clone User from domain B to comain A
+### 3. Clone User from domain B to comain A and share new password
 ```bash
 curl -X POST http://localhost:3000/api/user/clone \
   -H "X-API-Key: your_api_key_here"" \
@@ -274,6 +274,16 @@ curl -X POST http://localhost:3000/api/user/clone \
     "source_user_dn": "CN=Sarah Wilson,OU=TestingOU,DC=samdom,DC=example,DC=com",
     "target_domain": "domaina.local",
     "target_ou_dn": "OU=TestingOU,DC=domainA,DC=local"
+  }'
+```
+
+### 4. Enable User with password
+```bash
+curl -X POST http://localhost:3000/api/user/enable \
+  -H "X-API-Key: your_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "distinguished_name": "CN=Max Mustermann,OU=TestingOU,DC=samdom,DC=example,DC=com"
   }'
 ```
 ---

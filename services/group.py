@@ -18,6 +18,11 @@ class CreateGroupPayload(BaseModel):
     ou_dn: str
     info: Optional[str] = None  # Optional initial info text for the group object
 
+class GroupCreationResponse(BaseModel):
+    status: str = "success"
+    message: str
+    distinguished_name: str
+
 class UpdateGroupOwnershipPayload(BaseModel):
     group_name: str
     add_owners: Optional[str] = None     # Comma-separated emails to add as owners
@@ -61,22 +66,48 @@ def modify_owners(current_owners_string: str, add_owners: Optional[str], delete_
         
     return "Owners:" + ";".join(sorted(owners)) + ";"
 
-def create_group(payload: CreateGroupPayload) -> str:
-    """Create a new AD group object in the provided OU and return its distinguishedName."""
-    conn = connect_ldap()
-    dn = f"CN={payload.group_name},{payload.ou_dn}"
-    attrs = {
-        'objectClass': ['top', 'group'],
-        'sAMAccountName': payload.group_name
-    }
-    # Set optional info text if provided at creation time
-    if payload.info:
-        attrs['info'] = payload.info
+def create_group(payload: CreateGroupPayload) -> GroupCreationResponse:
+    """
+    Create a new AD group object in the provided OU.
+    Returns a standardized API response model.
+    """
+    try:
+        conn = connect_ldap()
+        dn = f"CN={payload.group_name},{payload.ou_dn}"
+        
+        attrs = {
+            'objectClass': ['top', 'group'],
+            'sAMAccountName': payload.group_name
+        }
+        
+        # Set optional info text if provided at creation time
+        if payload.info:
+            attrs['info'] = payload.info
 
-    if not conn.add(dn, attributes=attrs):
-        raise AppError(status_code=400, error="LDAP Operation Failed", details=conn.result.get('description', 'Unknown error'))
-    
-    return dn
+        # Try to create the group object in LDAP
+        if not conn.add(dn, attributes=attrs):
+            raise AppError(
+                status_code=400, 
+                error="bad_request", 
+                details=conn.result.get('description', 'Unknown error')
+            )
+        
+        # Return structured data that automatically serializes to clean JSON
+        return GroupCreationResponse(
+            message="Group created successfully.",
+            distinguished_name=dn
+        )
+
+    except AppError as ae:
+        # Re-raise expected application errors
+        raise ae
+    except Exception as e:
+        # Catch unexpected connection or network errors
+        raise AppError(
+            status_code=500,
+            error="internal_server_error",
+            details=f"An unexpected error occurred during group creation: {str(e)}"
+        )
 
 def update_group_ownership(payload: UpdateGroupOwnershipPayload) -> dict:
     """Update the Owners list inside the group's info attribute."""

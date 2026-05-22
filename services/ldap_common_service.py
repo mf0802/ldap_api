@@ -19,6 +19,11 @@ class DeleteObjectPayload(BaseModel):
     domain: str            # e.g. "://example.com"
     sam_account_name: str  # e.g. "m.mustermann" or "GG_Marketing"
 
+class ObjectDeletionResponse(BaseModel):
+    status: str = "success"
+    message: str
+    distinguished_name: str
+
 ALLOWED_ATTRIBUTES = {
     "user": [
         "cn", "sAMAccountName", "givenName", "sn", "mail", 
@@ -143,26 +148,41 @@ def find_dn(conn: Connection, raw_name: str, object_class: str) -> str:
         
     return conn.entries[0].entry_dn
 
-def delete_object_from_forest(payload: DeleteObjectPayload, object_class: str) -> str:
-    """Deletes any LDAP object from a specific forest."""
-    conn = connect_ldap()
-    
-    # 1. Find the DN in the correct forest
-    target_dn = find_dn_multi_forest(conn, payload.sam_account_name, object_class, payload.domain)
-    
-    # 2. Delete the object
-    if not conn.delete(target_dn):
-        raise AppError(
-            status_code=400, 
-            error="LDAP Operation Failed", 
-            details=conn.result.get('description', f"Could not delete {object_class} in domain {payload.domain}.")
+def delete_object_from_forest(payload: DeleteObjectPayload, object_class: str) -> ObjectDeletionResponse:
+    """
+    Deletes any LDAP object from a specific forest based on the provided domain.
+    Returns a standardized API response model.
+    """
+    try:
+        conn = connect_ldap()
+        
+        # 1. Find the DN in the correct forest
+        target_dn = find_dn_multi_forest(conn, payload.sam_account_name, object_class, payload.domain)
+        
+        # 2. Delete the object
+        if not conn.delete(target_dn):
+            raise AppError(
+                status_code=400, 
+                error="bad_request", 
+                details=conn.result.get('description', f"Could not delete {object_class} in domain {payload.domain}.")
+            )
+        
+        # Return structured data that automatically serializes to clean JSON
+        return ObjectDeletionResponse(
+            message=f"{object_class.capitalize()} '{payload.sam_account_name}' successfully deleted from domain '{payload.domain}'.",
+            distinguished_name=target_dn
         )
-    
-    return f"{object_class.capitalize()} '{payload.sam_account_name}' successfully deleted from domain '{payload.domain}'."
-    
-# =====================================================================
-# UNIVERSAL ROUTE LOGIC
-# =====================================================================
+
+    except AppError as ae:
+        # Re-raise expected application errors
+        raise ae
+    except Exception as e:
+        # Catch unexpected connection, forest lookup, or network errors
+        raise AppError(
+            status_code=500,
+            error="internal_server_error",
+            details=f"An unexpected error occurred during {object_class} deletion: {str(e)}"
+        )
 
 def modify_attributes(payload: ModifyMultipleAttributesPayload) -> dict:
     conn = connect_ldap()

@@ -14,6 +14,14 @@ class CreateUserPayload(BaseModel):
     last_name: str
     ou_dn: str  # Target organizational unit DN for the new user
 
+class EnableUserPayload(BaseModel):
+    distinguished_name: str
+
+class UserCreationResponse(BaseModel):
+    status: str = "success"
+    message: str
+    distinguished_name: str
+
 class DynamicCloneUserPayload(BaseModel):
     source_domain: str       # e.g., "domaina.local" or "test.forest.net"
     source_user_dn: str      # Full source Distinguished Name (DN)
@@ -21,22 +29,98 @@ class DynamicCloneUserPayload(BaseModel):
     target_ou_dn: str        # Target OU where the user should be cloned into
     temporary_password: Optional[str] = None  # Optional, will be auto-generated if omitted
 
-def create_user(payload: CreateUserPayload) -> str:
-    """Create a new Active Directory user entry and return its distinguishedName."""
-    conn = connect_ldap()
-    dn = f"CN={payload.first_name} {payload.last_name},{payload.ou_dn}"
-    attrs = {
-        'objectClass': ['top', 'person', 'organizationalPerson', 'user'],
-        'sAMAccountName': payload.sam_account_name,
-        'givenName': payload.first_name,
-        'sn': payload.last_name,
-        'userAccountControl': '514'  # Disabled account status, password must be set later
-    }
-    # Try to create the user object in LDAP and raise a structured error on failure
-    if not conn.add(dn, attributes=attrs):
-        raise AppError(status_code=400, error="LDAP Operation Failed", details=conn.result.get('description', 'Failed to create user'))
-    
-    return dn
+class UserActivationResponse(BaseModel):
+    status: str = "success"
+    message: str
+    distinguished_name: str
+    generated_password: str
+
+def create_user(payload: CreateUserPayload) -> UserCreationResponse:
+    """
+    Create a new Active Directory user entry in a disabled state.
+    Returns a standardized API response model.
+    """
+    try:
+        conn = connect_ldap()
+        dn = f"CN={payload.first_name} {payload.last_name},{payload.ou_dn}"
+        
+        attrs = {
+            'objectClass': ['top', 'person', 'organizationalPerson', 'user'],
+            'sAMAccountName': payload.sam_account_name,
+            'givenName': payload.first_name,
+            'sn': payload.last_name,
+            'userAccountControl': '514'  # Disabled account status, password must be set later
+        }
+        
+        # Try to create the user object in LDAP
+        if not conn.add(dn, attributes=attrs):
+            raise AppError(
+                status_code=400, 
+                error="bad_request", 
+                details=conn.result.get('description', 'Failed to create user')
+            )
+        
+        # Return structured data that automatically serializes to clean JSON
+        return UserCreationResponse(
+            message="User created successfully in disabled state.",
+            distinguished_name=dn
+        )
+
+    except AppError as ae:
+        # Re-raise expected application errors
+        raise ae
+    except Exception as e:
+        # Catch unexpected connection or network errors
+        raise AppError(
+            status_code=500,
+            error="internal_server_error",
+            details=f"An unexpected error occurred during user creation: {str(e)}"
+        )
+
+def enable_user_with_password(dn: str) -> UserActivationResponse:
+    """
+    Sets a new password and enables an existing AD user account.
+    Returns a standardized API response model.
+    """
+    try:
+        # Establish connection - Must be secure LDAPS (Port 636) to modify passwords
+        conn = connect_ldap()  
+        
+        # Generate the password and format it for Active Directory (UTF-16-LE with quotes)
+        password = generate_ad_compliant_password()
+        encoded_password = f'"{password}"'.encode('utf-16-le')
+        
+        # Bundle operations: Set unicodePwd and change userAccountControl to 512 (Normal Account / Enabled)
+        modifications = {
+            'unicodePwd': [(MODIFY_REPLACE, [encoded_password])],
+            'userAccountControl': [(MODIFY_REPLACE, ['512'])]
+        }
+        
+        # Execute the changes in Active Directory (Returns False on AD policy violation)
+        if not conn.modify(dn, changes=modifications):
+            raise AppError(
+                status_code=400,
+                error="bad_request",
+                details=conn.result.get('description', 'Failed to enable account or set password')
+            )
+            
+        # Return structured data that automatically serializes to clean JSON
+        return UserActivationResponse(
+            message="The user account has been successfully enabled and the password has been set.",
+            distinguished_name=dn,
+            generated_password=password
+        )
+
+    except AppError as ae:
+        # Re-raise expected application errors so FastAPI can handle them properly
+        raise ae
+    except Exception as e:
+        # Catch unexpected connection, network, or library errors
+        raise AppError(
+            status_code=500,
+            error="internal_server_error",
+            details=f"An unexpected error occurred during LDAP operation: {str(e)}"
+        )
 
 def generate_ad_compliant_password(length: int = 16) -> str:
     """Generate a random password that meets strict Active Directory complexity rules."""
