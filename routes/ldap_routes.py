@@ -84,3 +84,10 @@ def handle_unlock_user(payload: user.CheckLockoutPayload):
 def handle_multi_forest_search(payload: ldap_common_service.MultiForestSearchPayload):
     # Search for an object by sAMAccountName across all configured AD forests (returns all duplicates)
     return ldap_common_service.search_object_across_forests(payload)
+
+@router.post("/user/password/reset-temporary", status_code=status.HTTP_200_OK, response_model=user.PasswordResetRandomResponse)
+def handle_user_password_reset_random(payload: user.ResetPasswordRandomPayload):
+    """
+    Reset a user's password to an automatically generated, AD-compliant temporary password.
+    """
+    return user.reset_user_password_random(payload)

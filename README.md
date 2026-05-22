@@ -1,3 +1,16 @@
+# 🖖 Demo for a python based LDAP / Active Directory API
+
+Due to some reason we need a LDAP API to manage Active Directory objects from several backends like ServiceNow, Elementum, Azure, etc.
+To implement this I have started to create a python based API. 
+
+- For development and testing I'm using Docker containers to simulate fake multi forest structures.
+- I tried to build all options we need for our day-to-day work, but the code structure allows to enhance the functionality with low effort.
+- The security is limited to an API key for development, since the final solution will be hosted in an Azure App with higher security.
+- The solution has not been tested against a real Active Directory yet!
+
+**Have fun! If you find errors you can keep them 😁**
+---
+
 # Docker Infrastructure Documentation for Fake Active Directory Environments
 
 This documentation describes the multi-domain Active Directory test setup running inside Docker. It is designed to emulate multiple isolated forest structures (`domaina.local`, `://example.com`, and `test.forest.net`) locally for API development, cross-forest account cloning, and integration testing.
@@ -93,7 +106,7 @@ services:
 
 Samba containers parse the bound `./entrypoint_*.d` directory on initial boot. Scripts inside must contain execution privileges (`chmod +x`) and use POSIX-compliant syntax.
 
-### 📄 Domain A Setup (`./entrypoint_a.d/provision_a.sh`)
+### 📄 Domain A Setup (`./entrypoint_a.d/01-provision_a.sh`)
 Populates Domain A with predictable, stable data structures for reproduction tests.
 
 ```bash
@@ -122,7 +135,7 @@ samba-tool user create jane.smith "SourcePass456!" \
 echo "=== Domain A Provisioning completed ==="
 ```
 
-### 📄 Domain B Setup (`./entrypoint_b.d/provision_b.sh`)
+### 📄 Domain B Setup (`./entrypoint_b.d/01-provision_b.sh`)
 Populates Domain B using an automated randomization pattern to simulate dynamic user growth.
 
 ```bash
@@ -155,6 +168,41 @@ for i in 1 2 3 4 5; do
 done
 
 echo "=== Provisioning completed ==="
+```
+
+### 📄 Domain C Setup (`./entrypoint_c.d/01-provision_c.sh`)
+Populates Domain C with predictable, stable data structures for reproduction tests.
+
+```bash
+#!/bin/sh
+echo "=== Starting provisioning of Domain C (External Test Domain) ==="
+
+# 1. Create a base Organizational Unit (OU) for source accounts
+samba-tool ou create "OU=TestingOU"
+
+# 2. Create standard test users with fixed data for reproduction
+# User 1: John Doe
+echo "Creating source user: john.doe"
+samba-tool user create john.doe "SourcePass123!" \
+  --userou="OU=TestingOU" \
+  --surname="Doe" \
+  --given-name="Jane" \
+  --mail="jane.doe@domainC.local" \
+  --job-title="Support Engineer" \
+  --department="IT-Infrastructure" \
+  --telephone-number="+49 123 34567"
+
+# User 2: Jane Smith
+echo "Creating source user: blake.smith"
+samba-tool user create blake.smith "SourcePass456!" \
+  --userou="OU=TestingOU" \
+  --surname="Smith" \
+  --given-name="Blake" \
+  --mail="blake.smith@domainC.local" \
+  --job-title="Backend Developer" \
+  --department="Software-Engineering"
+
+echo "=== Domain A Provisioning completed ==="
 ```
 
 ---
@@ -232,33 +280,34 @@ DOMAIN_C_SEARCH_BASE=DC=test,DC=forest,DC=net
 ## 🛠 General Object Operations/Routes
 
 ```text
-+------------------------------------+------------------------------------------------------------------------+
-| ROUTE                              | DESCRIPTION                                                            |
-+------------------------------------+------------------------------------------------------------------------+
++----------------------------------------+------------------------------------------------------------------------+
+| ROUTE                                  | DESCRIPTION                                                            |
++----------------------------------------+------------------------------------------------------------------------+
 GENERAL HELPERS
-| POST   /object/attribute/modify    | Modifies multiple LDAP attributes for any object type.                 |
-| POST   /object/query               | Queries object attributes by sAMAccountName and object class.          |
-| POST   /object/batch/modify        | Batch modifies specified attributes for any LDAP object type.          |
-| POST   /object/search/multi-forest | Searches for an object by sAMAccountName across all configured forests.|
-+------------------------------------+------------------------------------------------------------------------+
+| POST   /object/attribute/modify        | Modifies multiple LDAP attributes for any object type.                 |
+| POST   /object/query                   | Queries object attributes by sAMAccountName and object class.          |
+| POST   /object/batch/modify            | Batch modifies specified attributes for any LDAP object type.          |
+| POST   /object/search/multi-forest     | Searches for an object by sAMAccountName across all configured forests.|
++----------------------------------------+------------------------------------------------------------------------+
 USER
-| POST   /user/create                | Creates a new user object in LDAP.                                     |
-| POST   /user/enable                | Sets an AD-compliant password and enables the user account.            |
-| POST   /user/clone                 | Clones a user and returns a rich JSON structure including password.    |
-| POST   /user/lockout/check         | Checks if the specified user account is currently locked out.          |
-| POST   /user/unlock                | Manually unlocks a locked Active Directory user account.               |
-| DELETE /user/delete                | Deletes a user from the correct forest based on the provided domain.   |
-+------------------------------------+------------------------------------------------------------------------+
+| POST   /user/create                    | Creates a new user object in LDAP.                                     |
+| POST   /user/enable                    | Sets an AD-compliant password and enables the user account.            |
+| POST   /user/clone                     | Clones a user and returns a rich JSON structure including password.    |
+| POST   /user/lockout/check             | Checks if the specified user account is currently locked out.          |
+| POST   /user/unlock                    | Manually unlocks a locked Active Directory user account.               |
+| DELETE /user/delete                    | Deletes a user from the correct forest based on the provided domain.   |
+| POST   /user/password/reset-temporary  | Resets a user password with a newly generated temporary one.           |
++----------------------------------------+------------------------------------------------------------------------+
 GROUP
-| POST   /group/create               | Creates a new group object in LDAP.                                    |
-| POST   /group/batch                | Handles batch operations for group creation or update.                 |
-| PATCH  /group/owner                | Updates the group owner attribute.                                     |
-| DELETE /group/delete               | Deletes a group from the correct forest based on the provided domain.  |
-+------------------------------------+------------------------------------------------------------------------+
+| POST   /group/create                   | Creates a new group object in LDAP.                                    |
+| POST   /group/batch                    | Handles batch operations for group creation or update.                 |
+| PATCH  /group/owner                    | Updates the group owner attribute.                                     |
+| DELETE /group/delete                   | Deletes a group from the correct forest based on the provided domain.  |
++----------------------------------------+------------------------------------------------------------------------+
 COMPUTER
-| POST   /computer/create            | Creates a new computer object in LDAP.                                 |
-| DELETE /computer/delete            | Deletes a computer from the correct forest based on the domain.        |
-+------------------------------------+------------------------------------------------------------------------+
+| POST   /computer/create                | Creates a new computer object in LDAP.                                 |
+| DELETE /computer/delete                | Deletes a computer from the correct forest based on the domain.        |
++----------------------------------------+------------------------------------------------------------------------+
 ```
 
 ### 1. Universally Modify Attribute
@@ -394,6 +443,17 @@ curl -X POST http://localhost:3000/api/user/unlock \
     "distinguished_name": "CN=Alex Wilson,OU=TestingOU,DC=samdom,DC=example,DC=com"
   }'
 ```
+
+### 7. Reset User password
+```bash
+curl -X POST "http://localhost:8000/user/password/reset-temporary" \
+     -H "X-API-Key: your_api_key_here" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "distinguished_name": "cn=John Doe,OU=TestingOU,DC=samdom,DC=example,DC=com"
+     }'
+```
+
 ---
 
 ## 👥 Group Management

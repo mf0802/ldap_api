@@ -50,6 +50,13 @@ class UserUnlockResponse(BaseModel):
     message: str
     distinguished_name: str
 
+class ResetPasswordRandomPayload(BaseModel):
+    distinguished_name: str
+
+class PasswordResetRandomResponse(BaseModel):
+    message: str
+    temporary_password: str
+
 def create_user(payload: CreateUserPayload) -> UserCreationResponse:
     """
     Create a new Active Directory user entry in a disabled state.
@@ -393,4 +400,45 @@ def unlock_user(dn: str) -> UserUnlockResponse:
             status_code=500,
             error="internal_server_error",
             details=f"An unexpected error occurred during user unlock: {str(e)}"
+        )
+
+def reset_user_password_random(payload: ResetPasswordRandomPayload) -> PasswordResetRandomResponse:
+    """
+    Resets an Active Directory user's password to a newly generated, 
+    AD-compliant temporary password. Requires an LDAPS connection.
+    """
+    try:
+        conn = connect_ldap()  # Must be an LDAPS connection
+        
+        # 1. Generate the AD-compliant temporary password
+        temp_password = generate_ad_compliant_password()
+        quoted_password = f'"{temp_password}"'
+        encoded_password = quoted_password.encode('utf-16-le')
+        
+        # 2. Prepare the modification to overwrite the unicodePwd attribute
+        changes = {
+            'unicodePwd': [('MODIFY_REPLACE', [encoded_password])]
+        }
+        
+        # 3. Apply the modification in AD
+        if not conn.modify(payload.distinguished_name, changes):
+            raise AppError(
+                status_code=400,
+                error="bad_request",
+                details=conn.result.get('description', 'Failed to reset user password')
+            )
+            
+        # 4. Return the response containing the generated password
+        return PasswordResetRandomResponse(
+            message="User password has been reset successfully.",
+            temporary_password=temp_password
+        )
+        
+    except AppError as ae:
+        raise ae
+    except Exception as e:
+        raise AppError(
+            status_code=500,
+            error="internal_server_error",
+            details=f"An unexpected error occurred during password reset: {str(e)}"
         )
