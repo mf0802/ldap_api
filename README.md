@@ -383,6 +383,7 @@ curl -X POST http://localhost:3000/api/object/search/multi-forest \
 ### 5. Move Object to another OU
 Moves any existing LDAP object (User, Group, or Computer) into a different Organizational Unit (OU) within the same domain forest.
 
+```bash
 curl -X POST http://localhost:3000/api/object/move \
   -H "X-API-Key: your_api_key_here" \
   -H "Content-Type: application/json" \
@@ -390,6 +391,7 @@ curl -X POST http://localhost:3000/api/object/move \
     "target_dn": "CN=DESKTOP-PC01,CN=Computers,DC=samdom,DC=example,DC=com",
     "new_ou_dn": "OU=Staging,OU=Workstations,DC=samdom,DC=example,DC=com"
   }'
+```
 ---
 
 ## 👤 User Management
