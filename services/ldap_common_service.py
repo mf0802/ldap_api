@@ -52,6 +52,16 @@ class MultiForestSearchResponse(BaseModel):
     total_matches: int
     matches: List[DiscoveredObject]
 
+class MoveObjectPayload(BaseModel):
+    target_dn: str  # Current full Distinguished Name (e.g., CN=PC01,OU=OldOU,DC=...)
+    new_ou_dn: str  # Target Organizational Unit Distinguished Name (e.g., OU=NewOU,DC=...)
+
+class MoveObjectResponse(BaseModel):
+    status: str = "success"
+    message: str
+    old_dn: str
+    new_dn: str
+
 ALLOWED_ATTRIBUTES = {
     "user": [
         "cn", "sAMAccountName", "givenName", "sn", "mail", "description", "lockoutTime",
@@ -229,6 +239,61 @@ def delete_object(payload: DeleteObjectPayload) -> ObjectDeletionResponse:
         )
     finally:
         conn.unbind()
+
+
+def move_object_within_domain(payload: MoveObjectPayload) -> MoveObjectResponse:
+    """
+    Moves an LDAP object (User, Group, Computer) into another OU within the same domain.
+    The forest domain target is automatically detected from the target_dn.
+    """
+    try:
+        # 1. Automatically extract the domain name from the target DN
+        dn_lower = payload.target_dn.lower()
+        dc_components = [part.split('=')[1] for part in dn_lower.split(',') if part.strip().startswith('dc=')]
+        detected_domain = ".".join(dc_components)
+        
+        # 2. Dynamically connect to the matching domain forest
+        conn, _ = connect_to_domain(detected_domain)
+        
+        try:
+            # 3. Extract the clean Relative Distinguished Name (e.g., "CN=DESKTOP-PC01")
+            # Active Directory requires the absolute RDN string component
+            rdn = payload.target_dn.split(',')[0]
+            
+            # 4. Execute the move operation inside Active Directory
+            # Fixed: Changed keyword argument 'new_rdn' to the correct 'relative_dn'
+            if not conn.modify_dn(
+                dn=payload.target_dn, 
+                relative_dn=rdn, 
+                new_superior=payload.new_ou_dn
+            ):
+                raise AppError(
+                    status_code=400,
+                    error="bad_request",
+                    details=conn.result.get('description', 'Failed to move the object to the target OU.')
+                )
+                
+            # Construct the new updated DN path string for the API response
+            constructed_new_dn = f"{rdn},{payload.new_ou_dn}"
+            
+            return MoveObjectResponse(
+                message=f"Object successfully moved to the new OU within domain '{detected_domain}'.",
+                old_dn=payload.target_dn,
+                new_dn=constructed_new_dn
+            )
+            
+        finally:
+            # 5. Guarantee structural socket breakdown to eliminate connection leakage
+            conn.unbind()
+
+    except AppError as ae:
+        raise ae
+    except Exception as e:
+        raise AppError(
+            status_code=500,
+            error="internal_server_error",
+            details=f"An unexpected error occurred during object move: {str(e)}"
+        )
 
 
 def extract_sam_name(raw_name: str) -> str:

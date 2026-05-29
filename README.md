@@ -7,6 +7,7 @@ To implement this I have started to create a python based API.
 - I tried to build all options we need for our day-to-day work, but the code structure allows to enhance the functionality with low effort.
 - The security is limited to an API key for development, since the final solution will be hosted in an Azure App with higher security.
 - The solution has not been tested against a real Active Directory yet!
+  - The account locked and password parts must be confirmed. Other functions should work since it's standard LDAP. 
 
 **Have fun! If you find errors you can keep them 😁**
 ---
@@ -292,6 +293,7 @@ GENERAL HELPERS
 | POST   /object/query                   | Queries object attributes by sAMAccountName and object class.          |
 | POST   /object/batch/modify            | Batch modifies specified attributes for any LDAP object type.          |
 | POST   /object/search/multi-forest     | Searches for an object by sAMAccountName across all configured forests.|
+| POST   /object/move                    | Move an object by DN between domains.                                  |
 +----------------------------------------+------------------------------------------------------------------------+
 USER
 | POST   /user/create                    | Creates a new user object in LDAP.                                     |
@@ -377,6 +379,17 @@ curl -X POST http://localhost:3000/api/object/search/multi-forest \
     "sam_account_name": "awilson"
   }'
 ```
+
+### 5. Move Object to another OU
+Moves any existing LDAP object (User, Group, or Computer) into a different Organizational Unit (OU) within the same domain forest.
+
+curl -X POST http://localhost:3000/api/object/move \
+  -H "X-API-Key: your_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "target_dn": "CN=DESKTOP-PC01,CN=Computers,DC=samdom,DC=example,DC=com",
+    "new_ou_dn": "OU=Staging,OU=Workstations,DC=samdom,DC=example,DC=com"
+  }'
 ---
 
 ## 👤 User Management
