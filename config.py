@@ -9,39 +9,46 @@ class LdapConfig:
         self.environment = os.getenv("ENVIRONMENT", "development")
         self.api_key = os.getenv("X_API_KEY") or os.getenv("LOCAL_DEVELOPMENT_KEY")
         
-        # Backward compatibility aliases pointing to Domain B
-        self.url: str = os.getenv("DOMAIN_B_SERVER", "ldaps://localhost:3636")
-        self.bind_dn: str = os.getenv("DOMAIN_B_USER","")
-        self.bind_pw: str = os.getenv("DOMAIN_B_PASSWORD", "")
-        self.search_base: str = os.getenv("DOMAIN_B_SEARCH_BASE", "DC=samdom,DC=example,DC=com")
-
         self.LDAP_MAX_RETRIES = int(os.getenv("LDAP_MAX_RETRIES", 3))
         self.LDAP_RETRY_DELAY_SECS = int(os.getenv("LDAP_RETRY_DELAY_SECS", 2))
         
-        # Multi-forest configuration loaded 100% from environment variables
-        self.forests = {
-            "domaina.local": {
-                "url": os.getenv("DOMAIN_A_SERVER", "ldaps://localhost:636"),
-                "bind_dn": os.getenv("DOMAIN_A_USER"),
-                "bind_pw": os.getenv("DOMAIN_A_PASSWORD"),
-                "search_base": os.getenv("DOMAIN_A_SEARCH_BASE", "DC=domainA,DC=local")
-            },
-            "samdom.example.com": {
-                "url": self.url,
-                "bind_dn": self.bind_dn,
-                "bind_pw": self.bind_pw,
-                "search_base": self.search_base
-            },
-            "test.forest.net": {
-                "url": os.getenv("DOMAIN_C_SERVER", "ldaps://localhost:4636"),
-                "bind_dn": os.getenv("DOMAIN_C_USER"),
-                "bind_pw": os.getenv("DOMAIN_C_PASSWORD"),
-                "search_base": os.getenv("DOMAIN_C_SEARCH_BASE", "DC=test,DC=forest,DC=net")
-            }
-        }
+        # Dynamically parse all forests from the environment variables
+        self.forests = self._parse_forests()
         
+        # Backward compatibility aliases pointing specifically to Domain B (samdom.example.com)
+        domain_b_config = self.forests.get("samdom.example.com", {})
+        self.url: str = domain_b_config.get("url", "ldaps://localhost:3636")
+        self.bind_dn: str = domain_b_config.get("bind_dn", "")
+        self.bind_pw: str = domain_b_config.get("bind_pw", "")
+        self.search_base: str = domain_b_config.get("search_base", "DC=samdom,DC=example,DC=com")
+
         # Basic validation to prevent app start with missing critical config
         if not self.api_key:
             raise ValueError("Missing 'X_API_KEY' or 'LOCAL_DEVELOPMENT_KEY' in environment variables.")
+
+    def _parse_forests(self) -> dict:
+        forests_map = {}
+        
+        # Find all unique prefixes in uppercase (e.g., 'DOMAIN_A', 'DOMAIN_B', 'DOMAIN_C')
+        prefixes = set(
+            key.rsplit('_', 1)[0] 
+            for key in os.environ 
+            if key.startswith('DOMAIN_') and key.endswith('_NAME')
+        )
+        
+        for prefix in prefixes:
+            domain_name = os.getenv(f"{prefix}_NAME")
+            if not domain_name:
+                continue
+                
+            # Use lowercase for the dictionary key so domain_name.lower() lookups always match
+            forests_map[domain_name.lower()] = {
+                "url": os.getenv(f"{prefix}_SERVER"),
+                "bind_dn": os.getenv(f"{prefix}_USER"),
+                "bind_pw": os.getenv(f"{prefix}_PASSWORD"),
+                "search_base": os.getenv(f"{prefix}_SEARCH_BASE")
+            }
+            
+        return forests_map
 
 settings = LdapConfig()

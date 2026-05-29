@@ -340,9 +340,11 @@ curl -X POST http://localhost:3000/api/object/query \
   -H "X-API-Key: your_api_key_here" \
   -H "Content-Type: application/json" \
   -d '{
+    "domain_name": "samdom.example.com",
     "sam_account_name": "GG_Marketing",
     "object_class": "group"
   }'
+
 ```
 
 ### 3. Batch modify attributes
@@ -353,6 +355,7 @@ curl -X POST http://localhost:3000/api/object/batch/modify \
   -H "X-API-Key: your_api_key_here" \
   -H "Content-Type: application/json" \
   -d '{
+    "domain_name": "samdom.example.com",
     "sam_account_names": ["mmustermann", "jdoe"],
     "object_class": "user",
     "attributes": {
@@ -360,6 +363,7 @@ curl -X POST http://localhost:3000/api/object/batch/modify \
       "title": "Senior IT Engineer"
     }
   }'
+
 ```
 
 ### 4. Multi-Forest query option
@@ -385,6 +389,7 @@ curl -X POST http://localhost:3000/api/user/create \
   -H "X-API-Key: your_api_key_here" \
   -H "Content-Type: application/json" \
   -d '{
+    "domain_name": "samdom.example.com",
     "sam_account_name": "m.mustermann",
     "first_name": "Max",
     "last_name": "Mustermann",
@@ -398,7 +403,7 @@ curl -X DELETE http://localhost:3000/api/user/delete \
   -H "X-API-Key: your_api_key_here" \
   -H "Content-Type: application/json" \
   -d '{
-    "domain": "prod.firma.local",
+    "domain": "samdom.example.com",
     "sam_account_name": "m.mustermann"
   }'
 ```
@@ -408,7 +413,7 @@ You can specify the users temporary password using optional argument: `temporary
 
 ```bash
 curl -X POST http://localhost:3000/api/user/clone \
-  -H "X-API-Key: your_api_key_here"" \
+  -H "X-API-Key: your_api_key_here" \
   -H "Content-Type: application/json" \
   -d '{
     "source_domain": "samdom.example.com",
@@ -450,7 +455,7 @@ curl -X POST http://localhost:3000/api/user/unlock \
 
 ### 7. Reset User password
 ```bash
-curl -X POST "http://localhost:8000/user/password/reset-temporary" \
+curl -X POST http://localhost:3000/api/user/password/reset-temporary \
      -H "X-API-Key: your_api_key_here" \
      -H "Content-Type: application/json" \
      -d '{
@@ -471,6 +476,7 @@ curl -X POST http://localhost:3000/api/group/create \
   -H "X-API-Key: your_api_key_here" \
   -H "Content-Type: application/json" \
   -d '{
+    "domain_name": "samdom.example.com",
     "group_name": "GG_Marketing",
     "ou_dn": "OU=TestingOU,DC=samdom,DC=example,DC=com"
   }'
@@ -482,7 +488,7 @@ curl -X DELETE http://localhost:3000/api/group/delete \
   -H "X-API-Key: your_api_key_here" \
   -H "Content-Type: application/json" \
   -d '{
-    "domain": "prod.firma.local",
+    "domain": "samdom.example.com",
     "sam_account_name": "GG_Marketing"
   }'
 ```
@@ -495,9 +501,10 @@ curl -X POST http://localhost:3000/api/group/batch \
   -H "X-API-Key: your_api_key_here" \
   -H "Content-Type: application/json" \
   -d '{
+    "domain_name": "samdom.example.com",
     "action": "add",
-    "group_names": ["domain\\GG_Marketing", "domain\\GG_Sales"],
-    "user_names": ["domain\\m.mustermann", "domain\\l.schmidt"]
+    "group_names": ["GG_Marketing", "GG_Sales"],
+    "user_names": ["m.mustermann", "l.schmidt"]
   }'
 ```
 
@@ -510,6 +517,7 @@ curl -X PATCH http://localhost:3000/api/group/owner \
   -H "X-API-Key: your_api_key_here" \
   -H "Content-Type: application/json" \
   -d '{
+    "domain_name": "samdom.example.com",
     "group_name": "GG_Marketing",
     "add_owners": "owner1@example.com,owner2@example.com",
     "delete_owners": "old_owner@example.com"
@@ -528,6 +536,7 @@ curl -X POST http://localhost:3000/api/computer/create \
   -H "X-API-Key: your_api_key_here" \
   -H "Content-Type: application/json" \
   -d '{
+    "domain_name": "://example.com",
     "computer_name": "DESKTOP-PC01",
     "ou_dn": "CN=Computers,DC=samdom,DC=example,DC=com"
   }'

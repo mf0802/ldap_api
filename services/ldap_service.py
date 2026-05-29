@@ -1,8 +1,8 @@
 import os
 import ssl
 import time
+from typing import Tuple
 from ldap3 import Server, Connection, ALL, Tls
-# Use the correct ldap3 network exceptions
 from ldap3.core.exceptions import LDAPCommunicationError, LDAPSocketOpenError
 from config import settings
 from errors import AppError
@@ -11,8 +11,6 @@ def _connect_with_retry(server_url: str, bind_dn: str, bind_pw: str, tls_config:
     """Tries to connect to LDAP. Retries on network errors, fails instantly on auth errors."""
     max_retries = settings.LDAP_MAX_RETRIES
     delay = settings.LDAP_RETRY_DELAY_SECS
-    
-    # Track the last exception to raise if the loop terminates unexpectedly
     last_exception = None
     
     for attempt in range(max_retries):
@@ -22,29 +20,16 @@ def _connect_with_retry(server_url: str, bind_dn: str, bind_pw: str, tls_config:
         except (LDAPCommunicationError, LDAPSocketOpenError) as e:
             last_exception = e
             if attempt == max_retries - 1:
-                raise  # Out of attempts, raise the network error
+                raise 
             
             time.sleep(delay * (attempt + 1))
 
-    # Static type checkers require this fallback so the function never returns None
     if last_exception:
         raise last_exception
     raise LDAPCommunicationError("LDAP connection attempts exhausted without an explicit error.")
 
-def connect_ldap() -> Connection:
-    """Create and return a secure ldaps connection to the default domain B."""
-    try:
-        tls_config = Tls(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLSv1_2)
-        return _connect_with_retry(settings.url, settings.bind_dn, settings.bind_pw, tls_config)
-    except Exception as e:
-        raise AppError(
-            status_code=500,
-            error="LDAP connection error",
-            details=f"Could not connect to default domain B: {str(e)}"
-        )
-
-def connect_to_domain(domain_name: str) -> Connection:
-    """Dynamically establish an ldaps connection based on the forest name."""
+def connect_to_domain(domain_name: str) -> Tuple[Connection, str]:
+    """Dynamically establish an ldaps connection and return it along with its search base."""
     domain_key = domain_name.lower()
     if domain_key not in settings.forests:
         raise AppError(
@@ -56,7 +41,11 @@ def connect_to_domain(domain_name: str) -> Connection:
     config = settings.forests[domain_key]
     try:
         tls_config = Tls(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLSv1_2)
-        return _connect_with_retry(config["url"], config["bind_dn"], config["bind_pw"], tls_config)
+        connection = _connect_with_retry(config["url"], config["bind_dn"], config["bind_pw"], tls_config)
+        
+        # Return both connection and search base for use in API queries
+        return connection, config["search_base"]
+        
     except Exception as e:
         raise AppError(
             status_code=500,

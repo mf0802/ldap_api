@@ -1,24 +1,25 @@
 import json
 import os
 import string
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
-from services.ldap_service import connect_ldap
+from services.ldap_service import connect_to_domain
 from errors import AppError
 from ldap3 import SIMPLE, Connection, SUBTREE, MODIFY_REPLACE, NONE, Server
 from config import settings
 
 class ModifyMultipleAttributesPayload(BaseModel):
     target_dn: str
-    attributes: Dict[str, str]  # Key: Attributname, Value: Neuer Wert
+    attributes: Dict[str, str]  # Key: Attribute name, Value: New value
 
 class QueryObjectPayload(BaseModel):
+    domain_name: str  # Added to target the correct forest
     sam_account_name: str
     object_class: str  # "user", "group" or "computer"
 
 class DeleteObjectPayload(BaseModel):
-    domain: str            # e.g. "://example.com"
-    sam_account_name: str  # e.g. "m.mustermann" or "GG_Marketing"
+    domain: str            # Maps to domain name, e.g., "samdom.example.com"
+    sam_account_name: str  # e.g., "m.mustermann" or "GG_Marketing"
 
 class ObjectDeletionResponse(BaseModel):
     status: str = "success"
@@ -26,9 +27,9 @@ class ObjectDeletionResponse(BaseModel):
     distinguished_name: str
 
 class BatchModifyAttributesPayload(BaseModel):
+    domain_name: str  # Added to isolate the target forest
     sam_account_names: List[str]
     object_class: str  # e.g., "user", "group", "computer"
-    # Example for attributes: {"description": "Updated via API", "title": "Engineer"}
     attributes: Dict[str, Any]
 
 class GenericBatchResponse(BaseModel):
@@ -65,13 +66,13 @@ ALLOWED_ATTRIBUTES = {
         "location", "whenCreated", "memberOf"
     ]
 }
+
 # =====================================================================
-# COMMON HELPER FUNCTIONS (Now centrally located here)
+# COMMON HELPER FUNCTIONS 
 # =====================================================================
+
 def find_dn_multi_forest(conn: Connection, sam_name: str, object_class: str, domain: str) -> str:
-    """Searches for an object in a specific forest based on the domain."""
-    
-    # 1. Get the configuration for the desired domain from the settings
+    """Searches for an object in a specific forest based on the domain name."""
     forest_config = settings.forests.get(domain.lower())
     
     if not forest_config:
@@ -84,7 +85,6 @@ def find_dn_multi_forest(conn: Connection, sam_name: str, object_class: str, dom
     if object_class.lower() == "computer" and not sam_name.endswith("$"):
         sam_name = f"{sam_name}$"
         
-    # 2. Extract the search base from the forest configuration
     search_base = forest_config["search_base"]
     search_filter = f"(&(objectClass={object_class})(sAMAccountName={sam_name}))"
     
@@ -104,43 +104,137 @@ def find_dn_multi_forest(conn: Connection, sam_name: str, object_class: str, dom
         
     return conn.entries[0].entry_dn
 
+# =====================================================================
+# CORE SERVICE LOGIC FUNCTIONS
+# =====================================================================
+
 def get_object_attributes(payload: QueryObjectPayload) -> dict:
-    conn = connect_ldap()
+    """Queries an object from a dynamically specified domain forest."""
+    # 1. Dynamically connect to the matching domain forest
+    conn, search_base = connect_to_domain(payload.domain_name)
     
-    sam_name = extract_sam_name(payload.sam_account_name)
-    search_filter = f"(&(objectClass={payload.object_class})(sAMAccountName={sam_name}))"
-    
-    # Determine the appropriate whitelist for the object type
-    # If the type is unknown, request only standard attributes '*'
-    requested_attrs = ALLOWED_ATTRIBUTES.get(payload.object_class.lower(), ['*'])
-    
-    conn.search(
-        search_base=str(settings.search_base),
-        search_filter=search_filter,
-        search_scope=SUBTREE,
-        attributes=requested_attrs  # Request only the safe attributes from AD
-    )
-    
-    if not conn.entries:
-        raise AppError(
-            status_code=404, 
-            error="Not Found", 
-            details=f"Object '{payload.sam_account_name}' of type '{payload.object_class}' not found."
+    try:
+        sam_name = payload.sam_account_name
+        if payload.object_class.lower() == "computer" and not sam_name.endswith("$"):
+            sam_name = f"{sam_name}$"
+            
+        search_filter = f"(&(objectClass={payload.object_class})(sAMAccountName={sam_name}))"
+        requested_attrs = ALLOWED_ATTRIBUTES.get(payload.object_class.lower(), ['*'])
+        
+        conn.search(
+            search_base=str(search_base),
+            search_filter=search_filter,
+            search_scope=SUBTREE,
+            attributes=requested_attrs
         )
+        
+        if not conn.entries:
+            raise AppError(
+                status_code=404, 
+                error="Not Found", 
+                details=f"Object '{payload.sam_account_name}' of type '{payload.object_class}' not found on '{payload.domain_name}'."
+            )
+        
+        raw_json_str = conn.entries[0].entry_to_json()
+        entry_dict = json.loads(raw_json_str)
+        
+        return {
+            "status": "success",
+            "dn": entry_dict.get("dn"),
+            "attributes": entry_dict.get("attributes", {})
+        }
+    finally:
+        conn.unbind()
+
+
+def search_all_forests(payload: MultiForestSearchPayload) -> MultiForestSearchResponse:
+    """
+    Iterates through EVERY configured domain in your config file 
+    to locate a sAMAccountName profile across your infrastructure.
+    """
+    matches = []
+    sam_name = payload.sam_account_name
     
-    # Convert to a clean Python dict
-    raw_json_str = conn.entries[0].entry_to_json()
-    entry_dict = json.loads(raw_json_str)
-    
-    return {
-        "status": "success",
-        "dn": entry_dict.get("dn"),
-        "attributes": entry_dict.get("attributes", {})
-    }
+    # Check both normal and workstation variants safely
+    san_clean = sam_name.rstrip('$')
+    search_filter = f"(|(sAMAccountName={san_clean})(sAMAccountName={san_clean}$))"
+
+    # Loop dynamically through all forests configured via the .env file
+    for domain_key, domain_cfg in settings.forests.items():
+        conn = None
+        try:
+            conn, search_base = connect_to_domain(domain_key)
+            
+            # Request common basic attributes for categorization
+            conn.search(
+                search_base=str(search_base),
+                search_filter=search_filter,
+                search_scope=SUBTREE,
+                attributes=['cn', 'sAMAccountName', 'objectClass', 'mail', 'description']
+            )
+            
+            for entry in conn.entries:
+                raw_json = json.loads(entry.entry_to_json())
+                matches.append(
+                    DiscoveredObject(
+                        found_in_domain=domain_key,
+                        distinguished_name=raw_json.get("dn", ""),
+                        attributes=raw_json.get("attributes", {})
+                    )
+                )
+        except Exception:
+            # Skip silent network errors on dead DCs during global enumeration loops
+            continue
+        finally:
+            if conn:
+                conn.unbind()
+
+    return MultiForestSearchResponse(
+        message=f"Global multi-forest lookup complete for token: {sam_name}",
+        total_matches=len(matches),
+        matches=matches
+    )
+
+
+def delete_object(payload: DeleteObjectPayload) -> ObjectDeletionResponse:
+    """Deletes an object out of Active Directory from its specific domain."""
+    conn, _ = connect_to_domain(payload.domain)
+    try:
+        # Determine if it's a computer/user/group automatically by checking variants
+        target_dn = None
+        for o_class in ["user", "group", "computer"]:
+            try:
+                target_dn = find_dn_multi_forest(conn, payload.sam_account_name, o_class, payload.domain)
+                break
+            except AppError:
+                continue
+                
+        if not target_dn:
+            raise AppError(
+                status_code=404,
+                error="not_found",
+                details=f"Could not find object '{payload.sam_account_name}' on domain '{payload.domain}' to delete."
+            )
+            
+        if not conn.delete(target_dn):
+            raise AppError(
+                status_code=400,
+                error="bad_request",
+                details=conn.result.get('description', 'Failed to execute deletion operation.')
+            )
+            
+        return ObjectDeletionResponse(
+            message=f"Object successfully purged from domain '{payload.domain}'.",
+            distinguished_name=target_dn
+        )
+    finally:
+        conn.unbind()
 
 
 def extract_sam_name(raw_name: str) -> str:
-    """Extracts the sAMAccountName, whether with or without a domain prefix."""
+    """
+    Extracts the sAMAccountName, safely removing any NetBIOS 'DOMAIN\\username' prefix.
+    """
     if '\\' not in raw_name:
         return raw_name
         
@@ -153,135 +247,135 @@ def extract_sam_name(raw_name: str) -> str:
         )
     return parts[1]
 
-def find_dn(conn: Connection, raw_name: str, object_class: str) -> str:
-    """Searches for an LDAP object by sAMAccountName and returns the DN."""
+
+def find_dn(conn: Connection, raw_name: str, object_class: str, search_base: str) -> str:
+    """
+    Searches for an LDAP object by sAMAccountName within the explicitly targeted domain base.
+    Returns the exact Distinguished Name (DN).
+    """
     sam_name = extract_sam_name(raw_name)
+    
+    # Active Directory computer object names strictly require a trailing dollar sign
+    if object_class.lower() == "computer" and not sam_name.endswith("$"):
+        sam_name = f"{sam_name}$"
+        
     search_filter = f"(&(objectClass={object_class})(sAMAccountName={sam_name}))"
     
-    # Using str(...) ensures VS Code knows that None cannot be passed here
+    # Fixed: Use the dynamic search_base argument instead of the hardcoded global default
     conn.search(
-        search_base=str(settings.search_base), 
+        search_base=str(search_base), 
         search_filter=search_filter, 
         search_scope=SUBTREE, 
         attributes=['distinguishedName']
-    ) # type: ignore
+    )
     
     if not conn.entries:
         raise AppError(
             status_code=404, 
             error="Not Found", 
-            details=f"Object '{raw_name}' (Type: {object_class}) not found."
+            details=f"Object '{raw_name}' (Type: {object_class}) not found in search base '{search_base}'."
         )
         
     return conn.entries[0].entry_dn
 
-def delete_object_from_forest(payload: DeleteObjectPayload, object_class: str) -> ObjectDeletionResponse:
+
+def modify_attributes(payload: ModifyMultipleAttributesPayload) -> dict:
     """
-    Deletes any LDAP object from a specific forest based on the provided domain.
-    Returns a standardized API response model.
+    Modifies multiple attributes on an object dynamically, auto-detecting the target domain from the DN.
     """
     try:
-        conn = connect_ldap()
+        # 1. Automatically extract the domain name from the target DN
+        dn_lower = payload.target_dn.lower()
+        dc_components = [part.split('=')[1] for part in dn_lower.split(',') if part.strip().startswith('dc=')]
+        detected_domain = ".".join(dc_components)
         
-        # 1. Find the DN in the correct forest
-        target_dn = find_dn_multi_forest(conn, payload.sam_account_name, object_class, payload.domain)
+        # 2. Dynamically connect to the matching domain forest
+        conn, _ = connect_to_domain(detected_domain)
         
-        # 2. Delete the object
-        if not conn.delete(target_dn):
-            raise AppError(
-                status_code=400, 
-                error="bad_request", 
-                details=conn.result.get('description', f"Could not delete {object_class} in domain {payload.domain}.")
-            )
-        
-        # Return structured data that automatically serializes to clean JSON
-        return ObjectDeletionResponse(
-            message=f"{object_class.capitalize()} '{payload.sam_account_name}' successfully deleted from domain '{payload.domain}'.",
-            distinguished_name=target_dn
-        )
+        try:
+            # Dynamic construction of the changes dictionary for multiple attributes
+            changes = {
+                attr_name: [(MODIFY_REPLACE, [attr_value])] 
+                for attr_name, attr_value in payload.attributes.items()
+            }
+            
+            if not conn.modify(payload.target_dn, changes):
+                raise AppError(
+                    status_code=400, 
+                    error="LDAP Operation Failed", 
+                    details=conn.result.get('description', 'Modification failed')
+                )
+                
+            return {
+                "status": "success",
+                "message": f"Attributes updated successfully on domain '{detected_domain}'",
+                "dn": payload.target_dn,
+                "updated": payload.attributes
+            }
+        finally:
+            conn.unbind()
 
     except AppError as ae:
-        # Re-raise expected application errors
         raise ae
     except Exception as e:
-        # Catch unexpected connection, forest lookup, or network errors
         raise AppError(
             status_code=500,
             error="internal_server_error",
-            details=f"An unexpected error occurred during {object_class} deletion: {str(e)}"
+            details=f"An unexpected error occurred during attribute modification: {str(e)}"
         )
 
-def modify_attributes(payload: ModifyMultipleAttributesPayload) -> dict:
-    conn = connect_ldap()
-    
-    # Dynamic construction of the changes dictionary for multiple attributes
-    changes = {
-        attr_name: [(MODIFY_REPLACE, [attr_value])] 
-        for attr_name, attr_value in payload.attributes.items()
-    }
-    
-    if not conn.modify(payload.target_dn, changes):
-        raise AppError(
-            status_code=400, 
-            error="LDAP Operation Failed", 
-            details=conn.result.get('description', 'Modification failed')
-        )
-        
-    return {
-        "status": "success",
-        "message": "Attributes updated successfully",
-        "dn": payload.target_dn,
-        "updated": payload.attributes
-    }
 
 def handle_generic_batch_modify(payload: BatchModifyAttributesPayload) -> GenericBatchResponse:
     """
-    Batch update specified attributes for any type of LDAP object.
+    Batch update specified attributes for any type of LDAP object on a targeted forest domain.
     Returns a standardized API response model with detailed success/failure states.
     """
     try:
-        conn = connect_ldap()
-        successful = []
-        failed = []
-        
         if not payload.attributes:
             raise AppError(
                 status_code=400,
                 error="bad_request",
                 details="No attributes provided for modification."
             )
-            
-        # Build the dynamic changes dictionary for the ldap3 modify operation
-        # We use MODIFY_REPLACE as the standard action for attribute updates
-        changes = {}
-        for attr_name, attr_value in payload.attributes.items():
-            # Ensure the value is wrapped in a list as required by ldap3 changes format
-            value_list = attr_value if isinstance(attr_value, list) else [attr_value]
-            changes[attr_name] = [(MODIFY_REPLACE, value_list)]
-            
-        # Iterate over all provided objects
-        for sam_name in payload.sam_account_names:
-            try:
-                # Resolve the DN dynamically based on sAMAccountName and objectClass
-                object_dn = find_dn(conn, sam_name, payload.object_class)
+
+        # 1. Dynamically connect to the requested forest domain
+        conn, search_base = connect_to_domain(payload.domain_name)
+        successful = []
+        failed = []
+        
+        try:
+            # Build the dynamic changes dictionary for the ldap3 modify operation
+            changes = {}
+            for attr_name, attr_value in payload.attributes.items():
+                value_list = attr_value if isinstance(attr_value, list) else [attr_value]
+                changes[attr_name] = [(MODIFY_REPLACE, value_list)]
                 
-                # Execute the modification for the current object
-                if conn.modify(object_dn, changes):
-                    successful.append(f"Successfully updated {payload.object_class} '{sam_name}'")
-                else:
-                    error_desc = conn.result.get('description', 'Modification failed')
-                    failed.append(f"LDAP Error on '{sam_name}': {error_desc}")
+            # Iterate over all provided objects
+            for sam_name in payload.sam_account_names:
+                try:
+                    # Fixed: Pass the correct search_base into find_dn for multi-forest safety
+                    object_dn = find_dn(conn, sam_name, payload.object_class, search_base)
                     
-            except AppError as e:
-                failed.append(f"Lookup failed for '{sam_name}' ({payload.object_class}): {e.details}")
+                    # Execute the modification for the current object
+                    if conn.modify(object_dn, changes):
+                        successful.append(f"Successfully updated {payload.object_class} '{sam_name}'")
+                    else:
+                        error_desc = conn.result.get('description', 'Modification failed')
+                        failed.append(f"LDAP Error on '{sam_name}': {error_desc}")
+                        
+                except AppError as e:
+                    failed.append(f"Lookup failed for '{sam_name}' ({payload.object_class}): {e.details}")
+        finally:
+            # 2. Guarantee structural socket breakdown after the loops complete
+            conn.unbind()
                 
         # Determine the final summary message
         if not successful and failed:
-            message = f"All batch modifications for {payload.object_class} objects failed."
+            message = f"All batch modifications for {payload.object_class} objects failed on domain '{payload.domain_name}'."
         elif successful and failed:
-            message = f"Batch modifications for {payload.object_class} objects completed with some errors."
+            message = f"Batch modifications for {payload.object_class} objects completed with some errors on domain '{payload.domain_name}'."
         else:
-            message = f"All batch modifications for {payload.object_class} objects completed successfully."
+            message = f"All batch modifications for {payload.object_class} objects completed successfully on domain '{payload.domain_name}'."
             
         return GenericBatchResponse(
             message=message,
@@ -290,105 +384,87 @@ def handle_generic_batch_modify(payload: BatchModifyAttributesPayload) -> Generi
         )
 
     except AppError as ae:
-        # Re-raise expected validation errors
         raise ae
     except Exception as e:
-        # Catch unexpected connection, forest lookup, or network errors
         raise AppError(
             status_code=500,
             error="internal_server_error",
             details=f"An unexpected error occurred during generic batch modification: {str(e)}"
         )
 
+
 def search_object_across_forests(payload: MultiForestSearchPayload) -> MultiForestSearchResponse:
     """
     Searches for all LDAP objects matching the sAMAccountName across all 
-    dynamically configured domains in the .env file.
+    dynamically configured domains loaded into the application settings.
     Returns a list of all matches found across all forests.
     """
-    domains = []
-    matches = []
-    
-    # 1. Dynamically discover all configured domains from .env
-    for letter in string.ascii_uppercase:
-        prefix = f"DOMAIN_{letter}_"
-        domain_name = os.getenv(f"{prefix}NAME")
-        
-        if not domain_name:
-            break
-            
-        domains.append({
-            "name": domain_name,
-            "server": os.getenv(f"{prefix}SERVER"),
-            "user": os.getenv(f"{prefix}USER"),
-            "password": os.getenv(f"{prefix}PASSWORD"),
-            "search_base": os.getenv(f"{prefix}SEARCH_BASE")
-        })
-
-    if not domains:
+    # 1. Fallback validation check against your parsed configurations
+    if not settings.forests:
         raise AppError(
             status_code=500,
             error="internal_server_error",
-            details="No AD domains were detected or configured in the environment."
+            details="No AD domains were detected or configured in the environment settings."
         )
 
-    search_filter = f"(sAMAccountName={payload.sam_account_name})"
+    # Active Directory handles sAMAccountNames case-insensitively
+    sam_name = payload.sam_account_name
+    
+    # Computer accounts must be queryable via their workstation variant name token
+    san_clean = sam_name.rstrip('$')
+    search_filter = f"(|(sAMAccountName={san_clean})(sAMAccountName={san_clean}$))"
     requested_attributes = ['objectClass', 'sAMAccountName', 'displayName', 'description', 'mail', 'userAccountControl']
+    
+    matches = []
 
-    # 2. Iterate through all domains and collect ALL matches
-    for domain in domains:
-        if not domain["server"] or not domain["search_base"]:
-            continue
-            
+    # 2. Iterate dynamically through all configurations registered in config.py
+    for domain_name, forest_cfg in settings.forests.items():
+        conn = None
         try:
-            # Fixed Pylance warning by using NONE constant instead of None
-            server = Server(domain["server"], get_info=NONE)
-            conn = Connection(
-                server, 
-                user=domain["user"], 
-                password=domain["password"], 
-                authentication=SIMPLE,
-                auto_bind=True
-            )
+            # Leverage your central connection wrapper (reuses retry delays and TLS parameters)
+            conn, search_base = connect_to_domain(domain_name)
             
             conn.search(
-                search_base=domain["search_base"],
+                search_base=str(search_base),
                 search_filter=search_filter,
                 search_scope=SUBTREE,
                 attributes=requested_attributes
             )
             
-            # If matches are found in this domain, append them to our list
             if conn.entries:
                 for entry in conn.entries:
                     attributes_dict = {}
                     for attr_name in entry.entry_attributes:
                         val = entry[attr_name].value
+                        # Flatten list elements if they only contain a single structural value
                         if isinstance(val, list) and len(val) == 1:
-                            attributes_dict[attr_name] = val
+                            attributes_dict[attr_name] = val[0]
                         else:
                             attributes_dict[attr_name] = val
 
                     matches.append(
                         DiscoveredObject(
-                            found_in_domain=domain["name"],
+                            found_in_domain=domain_name,
                             distinguished_name=entry.entry_dn,
                             attributes=attributes_dict
                         )
                     )
-                
-            conn.unbind()
-            
+                    
         except Exception as e:
-            print(f"Failed to query forest {domain['name']}: {str(e)}")
+            # Gracefully log and skip dead or unreachable Domain Controllers during global lookups
+            print(f"Skipping domain '{domain_name}' during cross-forest search due to exception: {str(e)}")
             continue
+        finally:
+            # Crucial: Safely unbind the specific forest connection if it was initialized
+            if conn:
+                conn.unbind()
 
-    # 3. Check if we found at least one match across all forests
+    # 3. Enforce the required 404 response if no assets match anywhere
     if not matches:
         raise AppError(
             status_code=404,
             error="not_found",
-            details=f"Object with sAMAccountName '{payload.sam_account_name}' could not be found in any configured forest."
+            details=f"Object with sAMAccountName '{sam_name}' could not be found in any configured forest."
         )
         
     return MultiForestSearchResponse(
