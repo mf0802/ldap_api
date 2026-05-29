@@ -137,7 +137,7 @@ echo "=== Domain A Provisioning completed ==="
 ```
 
 ### 📄 Domain B Setup (`./entrypoint_b.d/01-provision_b.sh`)
-Populates Domain B using an automated randomization pattern to simulate dynamic user growth.
+Populates Domain B using an automated randomization pattern to simulate dynamic user growth. Scripts inside must contain execution privileges (`chmod +x`) and use POSIX-compliant syntax.
 
 ```bash
 #!/bin/sh
@@ -172,7 +172,7 @@ echo "=== Provisioning completed ==="
 ```
 
 ### 📄 Domain C Setup (`./entrypoint_c.d/01-provision_c.sh`)
-Populates Domain C with predictable, stable data structures for reproduction tests.
+Populates Domain C with predictable, stable data structures for reproduction tests. Scripts inside must contain execution privileges (`chmod +x`) and use POSIX-compliant syntax.
 
 ```bash
 #!/bin/sh
