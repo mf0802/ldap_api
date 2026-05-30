@@ -1,11 +1,11 @@
 #!/bin/sh
 echo "=== Starting provisioning of Domain A (Source) ==="
 
-# 1. Create a base Organizational Unit (OU) for source accounts
+# Step 1: Create base testing Organizational Unit
+echo "Creating base structures..."
 samba-tool ou create "OU=TestingOU"
 
-# 2. Create standard test users with fixed data for reproduction
-# User 1: John Doe
+# Step 2: Create standard test users
 echo "Creating source user: john.doe"
 samba-tool user create john.doe "SourcePass123!" \
   --userou="OU=TestingOU" \
@@ -16,7 +16,7 @@ samba-tool user create john.doe "SourcePass123!" \
   --department="IT-Infrastructure" \
   --telephone-number="+49 123 456789"
 
-# User 2: Jane Smith
+# User 2: Jane Smith (Populating the comment attribute via description parameter)
 echo "Creating source user: jane.smith"
 samba-tool user create jane.smith "SourcePass456!" \
   --userou="OU=TestingOU" \
@@ -24,6 +24,7 @@ samba-tool user create jane.smith "SourcePass456!" \
   --given-name="Jane" \
   --mail="jane.smith@domainA.local" \
   --job-title="Frontend Developer" \
-  --department="Software-Engineering"
+  --department="Software-Engineering" \
+  --description="TRUE_LITIGATION_HOLD_2026"
 
 echo "=== Domain A Provisioning completed ==="

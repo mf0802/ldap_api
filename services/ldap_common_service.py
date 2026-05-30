@@ -1,11 +1,10 @@
 import json
-import os
-import string
-from typing import Any, Dict, List, Optional
+#import logging
+from typing import Any, Dict, List
 from pydantic import BaseModel
 from services.ldap_service import connect_to_domain
 from errors import AppError
-from ldap3 import SIMPLE, Connection, SUBTREE, MODIFY_REPLACE, NONE, Server
+from ldap3 import Connection, SUBTREE, MODIFY_REPLACE
 from config import settings
 
 class ModifyMultipleAttributesPayload(BaseModel):
@@ -65,17 +64,20 @@ class MoveObjectResponse(BaseModel):
 ALLOWED_ATTRIBUTES = {
     "user": [
         "cn", "sAMAccountName", "givenName", "sn", "mail", "description", "lockoutTime",
-        "department", "title", "whenCreated", "userAccountControl", "telephoneNumber","memberOf"
+        "department", "title", "whenCreated", "userAccountControl", "telephoneNumber","memberOf", "comment"
     ],
     "group": [
         "cn", "sAMAccountName", "objectClass", "info", "description", 
-        "member", "whenCreated", "memberOf"
+        "member", "whenCreated", "memberOf", "comment"
     ],
     "computer": [
         "cn", "sAMAccountName", "operatingSystem", "operatingSystemVersion", "description",
-        "location", "whenCreated", "memberOf"
+        "location", "whenCreated", "memberOf", "comment"
     ]
 }
+
+# Initialize logger for debugging
+#logger = logging.getLogger(__name__)
 
 # =====================================================================
 # COMMON HELPER FUNCTIONS 
@@ -206,8 +208,15 @@ def search_all_forests(payload: MultiForestSearchPayload) -> MultiForestSearchRe
     )
 
 
+
 def delete_object(payload: DeleteObjectPayload) -> ObjectDeletionResponse:
-    """Deletes an object out of Active Directory from its specific domain."""
+    """
+    Deletes an object out of Active Directory from its specific domain, 
+    enforcing legal holds on users using dynamically configured attributes.
+    """
+    # Fetch the pre-parsed list of attributes from global settings
+    legal_hold_attrs = settings.legal_hold_attributes
+
     conn, _ = connect_to_domain(payload.domain)
     try:
         # Determine if it's a computer/user/group automatically by checking variants
@@ -225,7 +234,43 @@ def delete_object(payload: DeleteObjectPayload) -> ObjectDeletionResponse:
                 error="not_found",
                 details=f"Could not find object '{payload.sam_account_name}' on domain '{payload.domain}' to delete."
             )
+        
+        # --- Absolute Validation Guard ---
+        # Query target metadata and all dynamic legal hold fields in a single trip for user objects
+        search_success = conn.search(
+            search_base=target_dn,
+            search_filter="(objectClass=*)",
+            search_scope='BASE',
+            attributes=['objectClass'] + legal_hold_attrs
+        )
+        
+        if search_success and conn.entries:
+            target_entry = conn.entries[0]
+            object_classes = [str(oc).lower() for oc in target_entry.objectClass.values]
             
+            # Enforce legal hold protection explicitly if the object is a user account
+            if "user" in object_classes:
+                user_attributes = target_entry.entry_attributes_as_dict
+                normalized_attributes = {k.lower(): v for k, v in user_attributes.items()}
+                
+                # Iterate dynamically through all configured attributes from your .env
+                for attr_name in legal_hold_attrs:
+                    if attr_name in normalized_attributes:
+                        hold_values = normalized_attributes[attr_name]
+                        
+                        if hold_values and len(hold_values) > 0:
+                            non_empty_values = [str(val).strip() for val in hold_values if str(val).strip()]
+                            
+                            if non_empty_values:
+                                #logger.error(f"Legal hold active in field '{attr_name}' for user '{payload.sam_account_name}'. Aborting deletion.")
+                                raise AppError(
+                                    status_code=403,
+                                    error="legal_hold_active",
+                                    details=f"Deletion aborted. User '{payload.sam_account_name}' is on legal hold. Attribute '{attr_name}' contains: {non_empty_values}"
+                                )
+        # ---------------------------------
+            
+        # Execute deletion if no validation guard conditions were matched
         if not conn.delete(target_dn):
             raise AppError(
                 status_code=400,
@@ -237,6 +282,7 @@ def delete_object(payload: DeleteObjectPayload) -> ObjectDeletionResponse:
             message=f"Object successfully purged from domain '{payload.domain}'.",
             distinguished_name=target_dn
         )
+        
     finally:
         conn.unbind()
 

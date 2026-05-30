@@ -26,4 +26,4 @@ samba-tool user create jane.smith "SourcePass456!" \
   --job-title="Frontend Developer" \
   --department="Software-Engineering"
 
-echo "=== Domain A Provisioning completed ==="
+

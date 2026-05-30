@@ -1,5 +1,5 @@
 import re
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from ldap3 import SUBTREE, MODIFY_ADD, MODIFY_DELETE, MODIFY_REPLACE
 from pydantic import BaseModel
@@ -18,6 +18,7 @@ class CreateGroupPayload(BaseModel):
     group_name: str
     ou_dn: str
     info: Optional[str] = None  # Optional initial info text for the group object
+    scope: Literal["domain_local", "global", "universal"] = "global"
 
 class GroupCreationResponse(BaseModel):
     status: str = "success"
@@ -88,8 +89,15 @@ def modify_owners(current_owners_string: str, add_owners: Optional[str], delete_
 def create_group(payload: CreateGroupPayload) -> GroupCreationResponse:
     """
     Create a new AD group object in the provided OU on the target domain.
-    Returns a standardized API response model.
+    Returns a standardized API response model with specific group scope configurations.
     """
+    # Map friendly scope strings to Active Directory groupType integers (Security Groups)
+    SCOPE_MAP = {
+        "domain_local": -2147483644,  # 0x80000000 (Security) + 0x00000004 (Local)
+        "global": -2147483646,        # 0x80000000 (Security) + 0x00000002 (Global)
+        "universal": -2147483640       # 0x80000000 (Security) + 0x00000008 (Universal)
+    }
+
     try:
         # Fixed: Unpacking tuple connection logic correctly
         conn, search_base = connect_to_domain(payload.domain_name)
@@ -97,9 +105,13 @@ def create_group(payload: CreateGroupPayload) -> GroupCreationResponse:
         try:
             dn = f"CN={payload.group_name},{payload.ou_dn}"
             
+            # Select the correct groupType value based on payload, default to global
+            group_type_value = SCOPE_MAP.get(payload.scope, -2147483646)
+
             attrs = {
                 'objectClass': ['top', 'group'],
-                'sAMAccountName': payload.group_name
+                'sAMAccountName': payload.group_name,
+                'groupType': group_type_value  # Added: Injects scope on initial creation
             }
             
             if payload.info:
@@ -113,7 +125,7 @@ def create_group(payload: CreateGroupPayload) -> GroupCreationResponse:
                 )
             
             return GroupCreationResponse(
-                message=f"Group created successfully on domain '{payload.domain_name}'.",
+                message=f"Group '{payload.group_name}' ({payload.scope}) created successfully on domain '{payload.domain_name}'.",
                 distinguished_name=dn
             )
         finally:
@@ -127,6 +139,7 @@ def create_group(payload: CreateGroupPayload) -> GroupCreationResponse:
             error="internal_server_error",
             details=f"An unexpected error occurred during group creation: {str(e)}"
         )
+
 
 def update_group_ownership(payload: UpdateGroupOwnershipPayload) -> GroupOwnershipResponse:
     """

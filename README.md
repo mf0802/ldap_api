@@ -493,7 +493,8 @@ curl -X POST http://localhost:3000/api/group/create \
   -d '{
     "domain_name": "samdom.example.com",
     "group_name": "GG_Marketing",
-    "ou_dn": "OU=TestingOU,DC=samdom,DC=example,DC=com"
+    "ou_dn": "OU=TestingOU,DC=samdom,DC=example,DC=com",
+    "scope": "global"
   }'
 ```
 

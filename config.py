@@ -9,6 +9,14 @@ class LdapConfig:
         self.environment = os.getenv("ENVIRONMENT", "development")
         self.api_key = os.getenv("X_API_KEY") or os.getenv("LOCAL_DEVELOPMENT_KEY")
         
+        # 1. Read the comma-separated string from the environment
+        raw_attributes = os.getenv("LEGAL_HOLD_ATTRIBUTE_NAMES", "description,comment")
+        
+        # 2. Parse it into a clean, whitespace-stripped list of lowercase strings
+        self.legal_hold_attributes = [
+            attr.strip().lower() for attr in raw_attributes.split(",") if attr.strip()
+        ]
+        
         self.LDAP_MAX_RETRIES = int(os.getenv("LDAP_MAX_RETRIES", 3))
         self.LDAP_RETRY_DELAY_SECS = int(os.getenv("LDAP_RETRY_DELAY_SECS", 2))
         
