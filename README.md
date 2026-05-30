@@ -131,7 +131,8 @@ samba-tool user create jane.smith "SourcePass456!" \
   --given-name="Jane" \
   --mail="jane.smith@domainA.local" \
   --job-title="Frontend Developer" \
-  --department="Software-Engineering"
+  --department="Software-Engineering" \
+  --description="TRUE_LITIGATION_HOLD_2026"
 
 echo "=== Domain A Provisioning completed ==="
 ```
@@ -254,6 +255,11 @@ All requests must include the API key in the HTTP header:
 ```bash
 API_PORT=3000
 X_API_KEY=your_api_key_here
+# this is for legal hold testing - we will use a custom attribute to mark accounts that are on legal hold, and then ensure that our API correctly identifies and handles these accounts.
+# Those accounts should be excluded from deletion, and the API should return appropriate information when queried about them.
+# This is limited to user objects, and we will use a custom attributes to indicate legal hold status.
+# This is a comma-separated list of attributes that we will check for legal hold status. In this case, we will check both "description" and "comment" attributes, as well as "extensionAttribute5" for flexibility in testing.
+LEGAL_HOLD_ATTRIBUTE_NAME="description,comment,extensionAttribute5" 
 
 # LDAP Retry Configuration
 LDAP_MAX_RETRIES=3
