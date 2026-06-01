@@ -226,6 +226,11 @@ docker compose up -d
 
 # 4. Monitor provisioning progress (Wait approx 15 seconds until daemons loop out "ready")
 docker compose logs -f
+
+# 5. some helpers to check the AD content
+docker exec -it fake_ad_domain_a samba-tool group list
+docker exec -it fake_ad_domain_a samba-tool user list
+docker exec -it fake_ad_domain_a samba-tool computer list
 ```
 
 ### Local Network Connection Troubleshooting
@@ -304,6 +309,7 @@ GENERAL HELPERS
 USER
 | POST   /user/create                    | Creates a new user object in LDAP.                                     |
 | POST   /user/enable                    | Sets an AD-compliant password and enables the user account.            |
+| POST   /user/disable                   | Disables a user account                                                |
 | POST   /user/clone                     | Clones a user and returns a rich JSON structure including password.    |
 | POST   /user/lockout/check             | Checks if the specified user account is currently locked out.          |
 | POST   /user/unlock                    | Manually unlocks a locked Active Directory user account.               |
@@ -319,6 +325,8 @@ GROUP
 COMPUTER
 | POST   /computer/create                | Creates a new computer object in LDAP.                                 |
 | DELETE /computer/delete                | Deletes a computer from the correct forest based on the domain.        |
+| POST   /computer/enable                | Enables a new computer object in LDAP.                                 |
+| POST   /computer/disable               | Disables a new computer object in LDAP.                                |
 +----------------------------------------+------------------------------------------------------------------------+
 ```
 
@@ -484,6 +492,17 @@ curl -X POST http://localhost:3000/api/user/password/reset-temporary \
      }'
 ```
 
+### 8. Disable User account
+```bash
+curl -X POST http://localhost:3000/api/user/disable \
+     -H "X-API-Key: your_api_key_here" \
+     -H "Content-Type: application/json" \
+     -d '{
+        "domain_name": "samdom.example.com",
+        "sam_account_name": "m.mustermann"
+     }'
+```
+
 ---
 
 ## 👥 Group Management
@@ -572,5 +591,27 @@ curl -X DELETE http://localhost:3000/api/computer/delete \
   -d '{
     "domain": "test.forest.net",
     "sam_account_name": "DESKTOP-PC01"
+  }'
+```
+
+### 3. Disable Computer from Specific Forest
+```bash
+curl -X POST http://localhost:3000/api/computer/disable \
+  -H "X-API-Key: your_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "domain_name": "://example.com",
+    "computer_name": "DESKTOP-01"
+  }'
+```
+
+### 4. Enable Computer from Specific Forest
+```bash
+curl -X POST http://localhost:3000/api/computer/enable \
+  -H "X-API-Key: your_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "domain_name": "://example.com",
+    "computer_name": "DESKTOP-01"
   }'
 ```

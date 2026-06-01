@@ -71,7 +71,7 @@ ALLOWED_ATTRIBUTES = {
         "member", "whenCreated", "memberOf", "comment"
     ],
     "computer": [
-        "cn", "sAMAccountName", "operatingSystem", "operatingSystemVersion", "description",
+        "cn", "sAMAccountName", "operatingSystem", "operatingSystemVersion", "userAccountControl", "description",
         "location", "whenCreated", "memberOf", "comment"
     ]
 }

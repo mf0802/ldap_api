@@ -62,6 +62,13 @@ def handle_enable_user(payload: user.EnableUserPayload):
     """
     return user.enable_user_with_password(payload.distinguished_name)
 
+@router.post("/user/disable", status_code=status.HTTP_200_OK, response_model=user.UserDisableResponse)
+def handle_disable_user(payload: user.DisableUserPayload):
+    """
+    Disables an existing Active Directory user using their sAMAccountName.
+    """
+    return user.disable_user(payload)
+
 @router.post("/user/clone", status_code=status.HTTP_201_CREATED)
 def handle_clone_user(payload: user.DynamicCloneUserPayload):
     """
@@ -129,6 +136,19 @@ def handle_delete_computer(payload: ldap_common_service.DeleteObjectPayload):
     # Unified handler: Resolves identity cross-type and deletes it safely
     return ldap_common_service.delete_object(payload)
 
+@router.post("/computer/enable", status_code=status.HTTP_200_OK, response_model=computer.ComputerEnableResponse)
+def handle_enable_computer(payload: computer.EnableComputerPayload):
+    """
+    Enables an existing Active Directory computer account.
+    """
+    return computer.enable_computer(payload)
+
+@router.post("/computer/disable", status_code=status.HTTP_200_OK, response_model=computer.ComputerDisableResponse)
+def handle_disable_computer(payload: computer.DisableComputerPayload):
+    """
+    Disables an existing Active Directory computer account using its sAMAccountName.
+    """
+    return computer.disable_computer(payload)
 
 # =====================================================================
 # SECURITY & POLICIES SECURITY (LOCKOUTS, PASSWORDS)

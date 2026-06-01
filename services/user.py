@@ -3,7 +3,7 @@ import string
 from typing import Optional
 from datetime import datetime, timedelta, timezone
 
-from ldap3 import MODIFY_REPLACE
+from ldap3 import MODIFY_REPLACE, SUBTREE
 from ldap3.core.exceptions import LDAPInvalidDnError
 from pydantic import BaseModel
 from services.ldap_service import connect_to_domain
@@ -57,6 +57,15 @@ class ResetPasswordRandomPayload(BaseModel):
 class PasswordResetRandomResponse(BaseModel):
     message: str
     temporary_password: str
+
+class DisableUserPayload(BaseModel):
+    domain_name: str  # z.B. "domaina.local", "samdom.example.com"
+    sam_account_name: str  # Der eindeutige Login-Name des Benutzers
+
+class UserDisableResponse(BaseModel):
+    status: str = "success"
+    message: str
+    distinguished_name: str
 
 
 def create_user(payload: CreateUserPayload) -> UserCreationResponse:
@@ -153,6 +162,69 @@ def enable_user_with_password(dn: str) -> UserActivationResponse:
             status_code=500,
             error="internal_server_error",
             details=f"An unexpected error occurred during LDAP operation: {str(e)}"
+        )
+
+def disable_user(payload: DisableUserPayload) -> UserDisableResponse:
+    """
+    Sucht einen Active Directory Benutzer via sAMAccountName und deaktiviert ihn.
+    Gibt ein standardisiertes API-Response-Modell zurück.
+    """
+    try:
+        # Dynamische Verbindung zur angeforderten Domain herstellen
+        conn, search_base = connect_to_domain(payload.domain_name)
+        
+        # 1. Benutzer über sAMAccountName suchen, um korrekten DN und UAC zu finden
+        search_filter = f"(&(objectClass=user)(sAMAccountName={payload.sam_account_name}))"
+        
+        status = conn.search(
+            search_base=search_base,
+            search_filter=search_filter,
+            search_scope=SUBTREE,
+            attributes=['userAccountControl']
+        )
+        
+        if not status or not conn.entries:
+            raise AppError(
+                status_code=404,
+                error="not_found",
+                details=f"User with sAMAccountName '{payload.sam_account_name}' not found on domain '{payload.domain_name}'."
+            )
+            
+        # DN und aktuellen UAC-Wert aus dem Suchergebnis extrahieren
+        user_entry = conn.entries[0]
+        dn = user_entry.entry_dn
+        current_uac = int(user_entry.userAccountControl.value)
+        
+        # 2. Bitweises OR, um das Flag 'ACCOUNTDISABLE' (2) zu setzen
+        disabled_uac = current_uac | 2 
+        
+        # 3. Das Attribut im LDAP ändern
+        changes = {
+            'userAccountControl': [(MODIFY_REPLACE, [str(disabled_uac)])]
+        }
+        
+        if not conn.modify(dn, changes):
+            raise AppError(
+                status_code=400,
+                error="bad_request",
+                details=conn.result.get('description', 'Failed to disable user')
+            )
+            
+        # Verbindung explizit trennen
+        conn.unbind()
+        
+        return UserDisableResponse(
+            message=f"User '{payload.sam_account_name}' disabled successfully on domain '{payload.domain_name}'.",
+            distinguished_name=dn
+        )
+        
+    except AppError as ae:
+        raise ae
+    except Exception as e:
+        raise AppError(
+            status_code=500,
+            error="internal_server_error",
+            details=f"An unexpected error occurred during user disabling: {str(e)}"
         )
 
 
