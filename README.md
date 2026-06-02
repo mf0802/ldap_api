@@ -98,6 +98,72 @@ services:
       - ./dev-certs:/certs  # <-- Point this to your project subfolder with the certs for DOMAIN_C_SERVER
 ```
 
+## 🛠️ Generate certificates for development (helper script)
+
+```bash
+#!/bin/sh
+# generate_dev_certs.sh
+
+# Exit immediately if any command fails
+set -e
+
+# Define paths relative to project layout
+CERTS_DIR="./dev-certs"
+
+echo "===================================================="
+echo "Starting Certificate Generation for Development"
+echo "===================================================="
+
+# 1. Create the destination subfolder
+mkdir -p "$CERTS_DIR"
+
+# 2. Generate a Shared local Certificate Authority (CA)
+echo "\n[1/4] Generating Local Certificate Authority (CA)..."
+openssl genrsa -out "$CERTS_DIR/ca.key" 2048 2>/dev/null
+openssl req -x509 -new -nodes \
+  -key "$CERTS_DIR/ca.key" \
+  -sha256 -days 365 \
+  -out "$CERTS_DIR/ca.crt" \
+  -subj "/CN=Dev-CA"
+
+# 3. Generate Domain Server Keys & Certificates
+echo "\n[2/4] Generating Domain Server Certificates..."
+
+# --- Domain A: domaina.local ---
+openssl genrsa -out "$CERTS_DIR/domaina.key" 2048 2>/dev/null
+openssl req -new -key "$CERTS_DIR/domaina.key" -out "$CERTS_DIR/domaina.csr" -subj "/CN=domaina.local"
+openssl x509 -req -in "$CERTS_DIR/domaina.csr" -CA "$CERTS_DIR/ca.crt" -CAkey "$CERTS_DIR/ca.key" \
+  -CAcreateserial -out "$CERTS_DIR/domaina.crt" -days 365 -sha256 2>/dev/null
+
+# --- Domain B: example.com ---
+openssl genrsa -out "$CERTS_DIR/domainb.key" 2048 2>/dev/null
+openssl req -new -key "$CERTS_DIR/domainb.key" -out "$CERTS_DIR/domainb.csr" -subj "/CN=example.com"
+openssl x509 -req -in "$CERTS_DIR/domainb.csr" -CA "$CERTS_DIR/ca.crt" -CAkey "$CERTS_DIR/ca.key" \
+  -CAcreateserial -out "$CERTS_DIR/domainb.crt" -days 365 -sha256 2>/dev/null
+
+# --- Domain C: test.forest.net ---
+openssl genrsa -out "$CERTS_DIR/domainc.key" 2048 2>/dev/null
+openssl req -new -key "$CERTS_DIR/domainc.key" -out "$CERTS_DIR/domainc.csr" -subj "/CN=test.forest.net"
+openssl x509 -req -in "$CERTS_DIR/domainc.csr" -CA "$CERTS_DIR/ca.crt" -CAkey "$CERTS_DIR/ca.key" \
+  -CAcreateserial -out "$CERTS_DIR/domainc.crt" -days 365 -sha256 2>/dev/null
+
+# 4. Generate the Shared Client Certificate (CN=Administrator)
+echo "\n[3/4] Generating Shared Client Certificate..."
+openssl genrsa -out "$CERTS_DIR/client.key" 2048 2>/dev/null
+openssl req -new -key "$CERTS_DIR/client.key" -out "$CERTS_DIR/client.csr" -subj "/CN=Administrator"
+openssl x509 -req -in "$CERTS_DIR/client.csr" -CA "$CERTS_DIR/ca.crt" -CAkey "$CERTS_DIR/ca.key" \
+  -CAcreateserial -out "$CERTS_DIR/client.crt" -days 365 -sha256 2>/dev/null
+
+# 5. Clean up temporary CSR and Serial tracking files
+echo "\n[4/4] Cleaning up intermediate CSR configuration artifacts..."
+rm -f "$CERTS_DIR"/*.csr
+rm -f "$CERTS_DIR"/*.srl
+
+echo "===================================================="
+echo "SUCCESS: All certificates generated in $CERTS_DIR/"
+echo "===================================================="
+```
+
 ---
 
 ## 🚀 Directory Seeding Scripts (Data Provisioning)
@@ -283,7 +349,6 @@ cat <<EOF >> /etc/samba/smb.conf
 EOF
 echo "Samba container TLS parameters written successfully."
 ```
-
 
 ## 🪵 Operational Runbooks
 
