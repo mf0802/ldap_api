@@ -434,6 +434,15 @@ DOMAIN_C_USER=CN=Administrator,CN=Users,DC=test,DC=forest,DC=net
 DOMAIN_C_PASSWORD=P@ssW0rd123
 DOMAIN_C_SEARCH_BASE=DC=test,DC=forest,DC=net
 
+# === PROD DOMAIN EXAMPLE ===
+DOMAIN_P_NAME=prod.example.com
+DOMAIN_P_SERVER=ldaps://localhost:4636
+DOMAIN_P_USER=CN=Administrator,CN=Users,DC=prod,DC=example,DC=com
+DOMAIN_P_PASSWORD=SecretC123!
+DOMAIN_P_SEARCH_BASE=DC=prod,DC=example,DC=com
+DOMAIN_P_CA_CERT_PATH=/path/to/ca_cert.crt
+DOMAIN_P_CLIENT_CERT_PATH=/path/to/client_cert.crt
+DOMAIN_P_CLIENT_KEY_PATH=/path/to/client_key.key
 # === ...
 ```
 ---
