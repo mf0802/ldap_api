@@ -102,64 +102,188 @@ services:
 
 ## 🚀 Directory Seeding Scripts (Data Provisioning)
 
-Samba containers parse the bound `./entrypoint_*.d` directory on initial boot. Scripts inside must contain execution privileges (`chmod +x`) and use POSIX-compliant syntax.
+Samba containers parse the bound ./entrypoint_*.d directory on initial boot. Scripts inside must contain execution privileges (chmod +x) and use POSIX-compliant syntax.
 
-services:
-  # Domain A: Source Domain (domainA.local)
-  samba-ad-a:
-    image: smblds/smblds:latest
-    container_name: fake_ad_domain_a
-    platform: linux/amd64
-    restart: unless-stopped
-    environment:
-      INSECURE_LDAP: "true"
-      REALM: "DOMAINA.LOCAL"       # Becomes DC=domainA,DC=local
-      DOMAIN: "DOMAINA"             # NetBIOS short name
-      ADMINPASS: "SecretA123!"     # Password for CN=Administrator
-    ports:
-      - "389:389"   # Standard LDAP (Maps to DOMAIN_A_SERVER)
-      - "636:636"   # LDAPS
-    volumes:
-      - ./entrypoint_a.d:/entrypoint.d
-      - ./dev-certs:/certs  # <-- Point this to your project subfolder with the certs for DOMAIN_A_SERVER
+📄 Domain A Setup (./entrypoint_a.d/01-provision_a.sh)
 
-  # Domain B: Target Domain (samdom.example.com)
-  samba-ad-b:
-    image: smblds/smblds:latest
-    container_name: fake_ad_domain_b
-    platform: linux/amd64
-    restart: unless-stopped
-    environment:
-      INSECURE_LDAP: "true"
-      REALM: "SAMDOM.EXAMPLE.COM"  # Becomes DC=samdom,DC=example,DC=com
-      DOMAIN: "SAMDOM"              # NetBIOS short name
-      ADMINPASS: "SecretB123!"     # Password for CN=Administrator
-    ports:
-      - "3389:389"  # Standard LDAP (Maps to DOMAIN_B_SERVER)
-      - "3636:636"  # LDAPS
-    volumes:
-      - ./entrypoint_b.d:/entrypoint.d
-      - ./dev-certs:/certs  # <-- Point this to your project subfolder with the certs for DOMAIN_B_SERVER
+Populates Domain A with predictable, stable data structures for reproduction tests.
+
+```bash
+#!/bin/sh
+echo "=== Starting provisioning of Domain A (Source) ==="
+
+samba-tool ou create "OU=TestingOU"
+
+samba-tool user create john.doe "SourcePass123!" \
+  --userou="OU=TestingOU" \
+  --surname="Doe" \
+  --given-name="John" \
+  --mail="john.doe@domainA.local" \
+  --job-title="DevOps Engineer" \
+  --department="IT-Infrastructure" \
+  --telephone-number="+49 123 456789"
+
+samba-tool user create jane.smith "SourcePass456!" \
+  --userou="OU=TestingOU" \
+  --surname="Smith" \
+  --given-name="Jane" \
+  --mail="jane.smith@domainA.local" \
+  --job-title="Frontend Developer" \
+  --department="Software-Engineering"
+
+echo "=== Domain A Provisioning completed ==="
+```
+
+📄 Domain A Setup (./entrypoint_a.d/setup_certs.sh)
+
+```bash
+#!/bin/sh
+# entrypoint_a.d/setup_certs.sh
+
+mkdir -p /etc/samba/tls
+
+# Copy generated certificates from the mounted project subfolder
+cp /certs/ca.crt /etc/samba/tls/ca.crt
+cp /certs/domaina.crt /etc/samba/tls/domaina.crt
+cp /certs/domaina.key /etc/samba/tls/domaina.key
+chmod 600 /etc/samba/tls/domaina.key
+
+# Append configuration to smb.conf securely
+cat <<EOF >> /etc/samba/smb.conf
+[global]
+    tls enabled = yes
+    tls keyfile = /etc/samba/tls/domaina.key
+    tls certfile = /etc/samba/tls/domaina.crt
+    tls cafile = /etc/samba/tls/ca.crt
+    tls verify peer = ca_and_name
+EOF
+echo "Samba container TLS parameters written successfully."
+```
+
+📄 Domain B Setup (./entrypoint_b.d/01-provision_b.sh)
+
+Populates Domain B using an automated randomization pattern to simulate dynamic user growth.
+
+```bash
+#!/bin/sh
+echo "=== Starting provisioning of dynamic AD test data ==="
+
+samba-tool ou create "OU=TestingOU"
+samba-tool ou create "OU=Groups,OU=TestingOU,DC=samdom,DC=example,DC=com"
+
+# Generate 3 randomized groups
+for i in 1 2 3; do
+  RAND_ID=$(awk 'BEGIN{srand();print int(rand()*9000)+1000}')
+  samba-tool group add "Group-${RAND_ID}" --groupou="OU=Groups,OU=TestingOU"
+done
+
+# Generate 5 randomized users matching complexity constraints
+FIRST_NAMES="John Jane Alex Emily Michael Sarah"
+LAST_NAMES="Smith Doe Taylor Brown Wilson Miller"
+
+for i in 1 2 3 4 5; do
+  F_NAME=$(echo "$FIRST_NAMES" | awk -v r=$(( (RANDOM % 6) + 1 )) '{print $r}')
+  L_NAME=$(echo "$LAST_NAMES" | awk -v r=$(( (RANDOM % 6) + 1 )) '{print $r}')
+  RAND_NUM=$(awk 'BEGIN{srand();print int(rand()*90)+10}')
+  USERNAME=$(echo "${F_NAME}.${L_NAME}${RAND_NUM}" | tr '[:upper:]' '[:lower:]')
   
-  # ==========================================
-  # Domain C: External Test Domain (test.forest.net)
-  # ==========================================
-  samba-ad-c:
-    image: smblds/smblds:latest
-    container_name: fake_ad_domain_c
-    platform: linux/amd64
-    restart: unless-stopped
-    environment:
-      INSECURE_LDAP: "true"
-      REALM: "TEST.FOREST.NET"
-      DOMAIN: "TESTFOREST"
-      ADMINPASS: "SecretC123!"
-    ports:
-      - "4389:389"
-      - "4636:636"
-    volumes:
-      - ./entrypoint_c.d:/entrypoint.d
-      - ./dev-certs:/certs  # <-- Point this to your project subfolder with the certs for DOMAIN_C_SERVER
+  samba-tool user create "${USERNAME}" "SecurePass${RAND_NUM}!" \
+    --userou="OU=TestingOU" \
+    --surname="${L_NAME}" \
+    --given-name="${F_NAME}"
+done
+
+echo "=== Provisioning completed ==="
+```
+
+📄 Domain B Setup (./entrypoint_a.d/setup_certs.sh)
+
+```bash
+#!/bin/sh
+# entrypoint_b.d/setup_certs.sh
+
+mkdir -p /etc/samba/tls
+
+# Copy generated certificates from the mounted project subfolder
+cp /certs/ca.crt /etc/samba/tls/ca.crt
+cp /certs/domainb.crt /etc/samba/tls/domainb.crt
+cp /certs/domainb.key /etc/samba/tls/domainb.key
+chmod 600 /etc/samba/tls/domainb.key
+
+# Append configuration to smb.conf securely
+cat <<EOF >> /etc/samba/smb.conf
+[global]
+    tls enabled = yes
+    tls keyfile = /etc/samba/tls/domainb.key
+    tls certfile = /etc/samba/tls/domainb.crt
+    tls cafile = /etc/samba/tls/ca.crt
+    tls verify peer = ca_and_name
+EOF
+echo "Samba container TLS parameters written successfully."
+```
+
+📄 Domain C Setup (./entrypoint_c.d/01-provision_c.sh)
+
+Populates Domain C with predictable, stable data structures for reproduction tests.
+
+```bash
+#!/bin/sh
+echo "=== Starting provisioning of Domain C (External Test Domain) ==="
+
+# 1. Create a base Organizational Unit (OU) for source accounts
+samba-tool ou create "OU=TestingOU"
+
+# 2. Create standard test users with fixed data for reproduction
+# User 1: John Doe
+echo "Creating source user: john.doe"
+samba-tool user create john.doe "SourcePass123!" \
+  --userou="OU=TestingOU" \
+  --surname="Doe" \
+  --given-name="Jane" \
+  --mail="jane.doe@domainC.local" \
+  --job-title="Support Engineer" \
+  --department="IT-Infrastructure" \
+  --telephone-number="+49 123 34567"
+
+# User 2: Jane Smith
+echo "Creating source user: blake.smith"
+samba-tool user create blake.smith "SourcePass456!" \
+  --userou="OU=TestingOU" \
+  --surname="Smith" \
+  --given-name="Blake" \
+  --mail="blake.smith@domainC.local" \
+  --job-title="Backend Developer" \
+  --department="Software-Engineering"
+
+echo "=== Domain A Provisioning completed ==="
+```
+
+📄 Domain C Setup (./entrypoint_c.d/setup_certs.sh)
+
+```bash
+#!/bin/sh
+# entrypoint_c.d/setup_certs.sh
+
+mkdir -p /etc/samba/tls
+
+# Copy generated certificates from the mounted project subfolder
+cp /certs/ca.crt /etc/samba/tls/ca.crt
+cp /certs/domainc.crt /etc/samba/tls/domainc.crt
+cp /certs/domainc.key /etc/samba/tls/domainc.key
+chmod 600 /etc/samba/tls/domainc.key
+
+# Append configuration to smb.conf securely
+cat <<EOF >> /etc/samba/smb.conf
+[global]
+    tls enabled = yes
+    tls keyfile = /etc/samba/tls/domainc.key
+    tls certfile = /etc/samba/tls/domainc.crt
+    tls cafile = /etc/samba/tls/ca.crt
+    tls verify peer = ca_and_name
+EOF
+echo "Samba container TLS parameters written successfully."
+```
+
 
 ## 🪵 Operational Runbooks
 
