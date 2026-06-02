@@ -34,10 +34,12 @@ class LdapConfig:
         if not self.api_key:
             raise ValueError("Missing 'X_API_KEY' or 'LOCAL_DEVELOPMENT_KEY' in environment variables.")
 
+
     def _parse_forests(self) -> dict:
         forests_map = {}
+        project_root = os.path.dirname(os.path.abspath(__file__))
+        default_certs_dir = os.path.join(project_root, "dev-certs")
         
-        # Find all unique prefixes in uppercase (e.g., 'DOMAIN_A', 'DOMAIN_B', 'DOMAIN_C')
         prefixes = set(
             key.rsplit('_', 1)[0] 
             for key in os.environ 
@@ -49,12 +51,26 @@ class LdapConfig:
             if not domain_name:
                 continue
                 
-            # Use lowercase for the dictionary key so domain_name.lower() lookups always match
+            # Check for explicitly provided paths, or fall back to defaults
+            ca_path = os.getenv(f"{prefix}_CA_CERT_PATH", os.path.join(default_certs_dir, "ca.crt"))
+            client_cert = os.getenv(f"{prefix}_CLIENT_CERT_PATH", os.path.join(default_certs_dir, "client.crt"))
+            client_key = os.getenv(f"{prefix}_CLIENT_KEY_PATH", os.path.join(default_certs_dir, "client.key"))
+            
+            # Smart Check: If the client certificate files don't exist on disk, 
+            # set them to None so the connection script knows it's a standard password-based LDAPS environment.
+            if not os.path.exists(client_cert) or not os.path.exists(client_key):
+                client_cert = None
+                client_key = None
+
             forests_map[domain_name.lower()] = {
                 "url": os.getenv(f"{prefix}_SERVER"),
                 "bind_dn": os.getenv(f"{prefix}_USER"),
                 "bind_pw": os.getenv(f"{prefix}_PASSWORD"),
-                "search_base": os.getenv(f"{prefix}_SEARCH_BASE")
+                "search_base": os.getenv(f"{prefix}_SEARCH_BASE"),
+                
+                "ca_cert_path": ca_path,
+                "client_cert_path": client_cert,
+                "client_key_path": client_key,
             }
             
         return forests_map

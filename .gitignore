@@ -16,3 +16,16 @@ __pycache__/
 dist/
 build/
 *.egg
+dev-certs/
+*.pem
+*.key
+*.crt
+*.pfx
+*.cer
+*.csr
+*.der
+*.jks
+*.p12
+*.keystore
+*.srl
+*.csr

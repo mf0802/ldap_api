@@ -1,6 +1,16 @@
 #!/bin/sh
 echo "=== Starting provisioning of dynamic AD test data ==="
 
+# entrypoint_a.d/setup_certs.sh
+mkdir -p /etc/samba/tls
+
+# Docker mirrors your host's ./dev-certs folder into the container's /certs folder
+cp /certs/ca.crt /etc/samba/tls/ca.crt
+cp /certs/domaina.crt /etc/samba/tls/domaina.crt
+cp /certs/domaina.key /etc/samba/tls/domaina.key
+
+chmod 600 /etc/samba/tls/domaina.key
+
 # 1. Create base structures
 samba-tool ou create "OU=TestingOU"
 samba-tool ou create "OU=Groups,OU=TestingOU,DC=samdom,DC=example,DC=com"

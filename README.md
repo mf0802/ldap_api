@@ -5,7 +5,7 @@ To implement this I have started to create a python based API.
 
 - For development and testing I'm using Docker containers to simulate fake multi forest structures.
 - I tried to build all options we need for our day-to-day work, but the code structure allows to enhance the functionality with low effort.
-- The security is limited to an API key for development, since the final solution will be hosted in an Azure App with higher security.
+- The security using an API key and self signed certs for development, since the final solution will be hosted in an Azure App with higher security.
 - The solution has not been tested against a real Active Directory yet!
   - The account locked and password parts must be confirmed. Other functions should work since it's standard LDAP. 
 

@@ -15,6 +15,7 @@ services:
       - "636:636"   # LDAPS
     volumes:
       - ./entrypoint_a.d:/entrypoint.d
+      - ./dev-certs:/certs  # <-- Point this to your project subfolder with the certs for DOMAIN_A_SERVER
 
   # Domain B: Target Domain (samdom.example.com)
   samba-ad-b:
@@ -32,6 +33,7 @@ services:
       - "3636:636"  # LDAPS
     volumes:
       - ./entrypoint_b.d:/entrypoint.d
+      - ./dev-certs:/certs  # <-- Point this to your project subfolder with the certs for DOMAIN_B_SERVER
   
   # ==========================================
   # Domain C: External Test Domain (test.forest.net)
@@ -51,3 +53,4 @@ services:
       - "4636:636"
     volumes:
       - ./entrypoint_c.d:/entrypoint.d
+      - ./dev-certs:/certs  # <-- Point this to your project subfolder with the certs for DOMAIN_C_SERVER
