@@ -178,8 +178,22 @@ Populates Domain A with predictable, stable data structures for reproduction tes
 #!/bin/sh
 echo "=== Starting provisioning of Domain A (Source) ==="
 
+# entrypoint_a.d/setup_certs.sh
+mkdir -p /etc/samba/tls
+
+# Docker mirrors your host's ./dev-certs folder into the container's /certs folder
+cp /certs/ca.crt /etc/samba/tls/ca.crt
+cp /certs/domaina.crt /etc/samba/tls/domaina.crt
+cp /certs/domaina.key /etc/samba/tls/domaina.key
+
+chmod 600 /etc/samba/tls/domaina.key
+
+# Step 1: Create base testing Organizational Unit
+echo "Creating base structures..."
 samba-tool ou create "OU=TestingOU"
 
+# Step 2: Create standard test users
+echo "Creating source user: john.doe"
 samba-tool user create john.doe "SourcePass123!" \
   --userou="OU=TestingOU" \
   --surname="Doe" \
@@ -189,13 +203,16 @@ samba-tool user create john.doe "SourcePass123!" \
   --department="IT-Infrastructure" \
   --telephone-number="+49 123 456789"
 
+# User 2: Jane Smith (Populating the comment attribute via description parameter)
+echo "Creating source user: jane.smith"
 samba-tool user create jane.smith "SourcePass456!" \
   --userou="OU=TestingOU" \
   --surname="Smith" \
   --given-name="Jane" \
   --mail="jane.smith@domainA.local" \
   --job-title="Frontend Developer" \
-  --department="Software-Engineering"
+  --department="Software-Engineering" \
+  --description="TRUE_LITIGATION_HOLD_2026"
 
 echo "=== Domain A Provisioning completed ==="
 ```
@@ -234,24 +251,49 @@ Populates Domain B using an automated randomization pattern to simulate dynamic 
 #!/bin/sh
 echo "=== Starting provisioning of dynamic AD test data ==="
 
+# entrypoint_a.d/setup_certs.sh
+mkdir -p /etc/samba/tls
+
+# Docker mirrors your host's ./dev-certs folder into the container's /certs folder
+cp /certs/ca.crt /etc/samba/tls/ca.crt
+cp /certs/domaina.crt /etc/samba/tls/domaina.crt
+cp /certs/domaina.key /etc/samba/tls/domaina.key
+
+chmod 600 /etc/samba/tls/domaina.key
+
+# 1. Create base structures
 samba-tool ou create "OU=TestingOU"
 samba-tool ou create "OU=Groups,OU=TestingOU,DC=samdom,DC=example,DC=com"
 
-# Generate 3 randomized groups
+# 2. Generate random groups
+# We loop 3 times to create 3 random groups
 for i in 1 2 3; do
+  # Generate a random 4-digit number for uniqueness
   RAND_ID=$(awk 'BEGIN{srand();print int(rand()*9000)+1000}')
-  samba-tool group add "Group-${RAND_ID}" --groupou="OU=Groups,OU=TestingOU"
+  GROUP_NAME="Group-${RAND_ID}"
+  
+  echo "Creating random group: ${GROUP_NAME}"
+  samba-tool group add "${GROUP_NAME}" --groupou="OU=Groups,OU=TestingOU"
 done
 
-# Generate 5 randomized users matching complexity constraints
+# 3. Generate random users
+# Array simulation for standard shell (POSIX compliant)
 FIRST_NAMES="John Jane Alex Emily Michael Sarah"
 LAST_NAMES="Smith Doe Taylor Brown Wilson Miller"
 
+# We create 5 random users
 for i in 1 2 3 4 5; do
+  # Pick a random first name and last name using awk
   F_NAME=$(echo "$FIRST_NAMES" | awk -v r=$(( (RANDOM % 6) + 1 )) '{print $r}')
   L_NAME=$(echo "$LAST_NAMES" | awk -v r=$(( (RANDOM % 6) + 1 )) '{print $r}')
+  
+  # Generate a unique username and a random number
   RAND_NUM=$(awk 'BEGIN{srand();print int(rand()*90)+10}')
+  
+  # Convert names to lowercase for the sAMAccountName
   USERNAME=$(echo "${F_NAME}.${L_NAME}${RAND_NUM}" | tr '[:upper:]' '[:lower:]')
+  
+  echo "Creating random user: ${USERNAME} (${F_NAME} ${L_NAME})"
   
   samba-tool user create "${USERNAME}" "SecurePass${RAND_NUM}!" \
     --userou="OU=TestingOU" \
@@ -262,7 +304,7 @@ done
 echo "=== Provisioning completed ==="
 ```
 
-📄 Domain B Setup (./entrypoint_a.d/setup_certs.sh)
+📄 Domain B Setup (./entrypoint_b.d/setup_certs.sh)
 
 ```bash
 #!/bin/sh
@@ -296,6 +338,16 @@ Populates Domain C with predictable, stable data structures for reproduction tes
 #!/bin/sh
 echo "=== Starting provisioning of Domain C (External Test Domain) ==="
 
+# entrypoint_a.d/setup_certs.sh
+mkdir -p /etc/samba/tls
+
+# Docker mirrors your host's ./dev-certs folder into the container's /certs folder
+cp /certs/ca.crt /etc/samba/tls/ca.crt
+cp /certs/domaina.crt /etc/samba/tls/domaina.crt
+cp /certs/domaina.key /etc/samba/tls/domaina.key
+
+chmod 600 /etc/samba/tls/domaina.key
+
 # 1. Create a base Organizational Unit (OU) for source accounts
 samba-tool ou create "OU=TestingOU"
 
@@ -305,23 +357,21 @@ echo "Creating source user: john.doe"
 samba-tool user create john.doe "SourcePass123!" \
   --userou="OU=TestingOU" \
   --surname="Doe" \
-  --given-name="Jane" \
-  --mail="jane.doe@domainC.local" \
-  --job-title="Support Engineer" \
+  --given-name="John" \
+  --mail="john.doe@domainC.local" \
+  --job-title="DevOps Engineer" \
   --department="IT-Infrastructure" \
-  --telephone-number="+49 123 34567"
+  --telephone-number="+49 123 456789"
 
 # User 2: Jane Smith
-echo "Creating source user: blake.smith"
-samba-tool user create blake.smith "SourcePass456!" \
+echo "Creating source user: jane.smith"
+samba-tool user create jane.smith "SourcePass456!" \
   --userou="OU=TestingOU" \
   --surname="Smith" \
-  --given-name="Blake" \
-  --mail="blake.smith@domainC.local" \
-  --job-title="Backend Developer" \
+  --given-name="Jane" \
+  --mail="jane.smith@domainC.local" \
+  --job-title="Frontend Developer" \
   --department="Software-Engineering"
-
-echo "=== Domain A Provisioning completed ==="
 ```
 
 📄 Domain C Setup (./entrypoint_c.d/setup_certs.sh)
@@ -406,7 +456,7 @@ ENVIRONMENT=development
 # this is for legal hold testing - we will use a custom attribute to mark accounts that are on legal hold, and then ensure that our API correctly identifies and handles these accounts.
 # Those accounts should be excluded from deletion, and the API should return appropriate information when queried about them.
 # This is limited to user objects, and we will use a custom attributes to indicate legal hold status.
-# This is a comma-separated list of attributes that we will check for legal hold status. In this case, we will check both "description" and "comment" attributes, as well as "extensionAttribute5" for flexibility in testing.
+# This is a comma-separated list of attributes that we will check for legal hold status. In this case, we will check both "description" and "comment" attributes, as well as "extensionAttribute5" (only exists in a real Active Directory environment but not samba) for flexibility in testing.
 LEGAL_HOLD_ATTRIBUTE_NAME="description,comment,extensionAttribute5" 
 
 # LDAP Retry Configuration
