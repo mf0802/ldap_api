@@ -14,6 +14,8 @@ To implement this I have started to create a python based API.
 
 # Docker Infrastructure Documentation for Fake Active Directory Environments
 
+You must have docker installed to use this API. I have successfully tested this project against MacOS and Linux only.
+
 This documentation describes the multi-domain Active Directory test setup running inside Docker. It is designed to emulate multiple isolated forest structures (`domaina.local`, `://example.com`, and `test.forest.net`) locally for API development, cross-forest account cloning, and integration testing.
 
 ---
