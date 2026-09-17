@@ -166,8 +166,8 @@ def enable_user_with_password(dn: str) -> UserActivationResponse:
 
 def disable_user(payload: DisableUserPayload) -> UserDisableResponse:
     """
-    Sucht einen Active Directory Benutzer via sAMAccountName und deaktiviert ihn.
-    Gibt ein standardisiertes API-Response-Modell zurück.
+    Searches for an Active Directory user via sAMAccountName and disables them. 
+    Returns a standardized API response model.
     """
     try:
         # Dynamische Verbindung zur angeforderten Domain herstellen
